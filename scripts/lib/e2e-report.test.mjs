@@ -73,27 +73,27 @@ describe('summarizeSuites', () => {
     expect(summary.text).toBe('ctrl-f 3/3 · ui 6/6');
   });
 
-  it('acepta los 5 pasos de network solo con el tramo de dev omitido', () => {
+  it('acepta los 7 pasos de network solo con el tramo de dev omitido', () => {
     const network = [E2E_SUITES.find((suite) => suite.label === 'network')];
-    const logs = readFrom({ 'e2e-network-policy.log': 'STEPS: 5/5\r\n' });
+    const logs = readFrom({ 'e2e-network-policy.log': 'STEPS: 7/7\r\n' });
 
     process.env[NETWORK_SKIP_DEV_ENV] = '1';
     try {
       expect(summarizeSuites(network, logs)).toEqual({
         code: 0,
         result: 'PASS',
-        text: 'network 5/5',
+        text: 'network 7/7',
         problems: [],
       });
     } finally {
       delete process.env[NETWORK_SKIP_DEV_ENV];
     }
 
-    // Sin la variable, 5/5 está incompleto aunque el guion saliera con 0.
+    // Sin la variable, 7/7 está incompleto aunque el guion saliera con 0.
     const incomplete = summarizeSuites(network, logs);
     expect(incomplete.code).toBe(1);
     expect(incomplete.problems[0].message).toBe(
-      'e2e-network-policy.log declara 5/5 pasos; se esperaban 11/11.',
+      'e2e-network-policy.log declara 7/7 pasos; se esperaban 13/13.',
     );
   });
 
