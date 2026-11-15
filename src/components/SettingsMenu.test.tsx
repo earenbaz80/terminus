@@ -188,7 +188,7 @@ describe('SettingsMenu red y privacidad', () => {
 
     await waitFor(() => expect(setAllowPrivateNetworks).toHaveBeenCalledWith(true));
     await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'));
-    expect(region.textContent).toContain('úsalo solo en una red de confianza');
+    expect(region.textContent).toContain('la vista REAL sigue bloqueándolos');
     expect(localStorage.getItem(NETWORK_PREFERENCE_KEY)).toBe('1');
   });
 
