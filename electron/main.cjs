@@ -66,35 +66,52 @@ loadAdblockState();
 // NETWORK_POLICY=public still win, so an explicit environment opt-out fails closed.
 const NETWORK_STATE_FILENAME = 'network-state.json';
 let allowPrivateNetworks = false;
+// Only a variable Terminus wrote may be removed again: a TERMINUS_ALLOW_PRIVATE
+// that came from the user's environment belongs to the user, not to the switch.
+let networkPolicyEnvOwned = false;
 
 const networkStatePath = () => path.join(app.getPath('userData'), NETWORK_STATE_FILENAME);
 
+const envBlocksPrivateNetworks = () =>
+  process.env.TERMINUS_BLOCK_PRIVATE === '1' || process.env.TERMINUS_NETWORK_POLICY === 'public';
+
+const envGrantsPrivateNetworks = () =>
+  process.env.TERMINUS_ALLOW_PRIVATE === '1' ||
+  process.env.TERMINUS_NETWORK_POLICY === 'local' ||
+  process.env.TERMINUS_NETWORK_POLICY === 'private';
+
+// The switch only changes a decision it owns. A grant that comes from the
+// environment cannot be revoked from the UI, so this reports the effective state
+// instead of letting the menu claim a change the process never made.
 function networkPolicyLockedByEnv() {
-  return (
-    process.env.TERMINUS_BLOCK_PRIVATE === '1' || process.env.TERMINUS_NETWORK_POLICY === 'public'
-  );
+  if (envBlocksPrivateNetworks()) return true;
+  return !networkPolicyEnvOwned && envGrantsPrivateNetworks();
 }
 
 // The local server reads TERMINUS_ALLOW_PRIVATE on every request, so mirroring the
 // decision there is enough for the proxy and the DNS endpoint of the packaged app.
 function applyNetworkPolicyEnv() {
-  if (networkPolicyLockedByEnv()) return;
-  if (allowPrivateNetworks) process.env.TERMINUS_ALLOW_PRIVATE = '1';
-  else delete process.env.TERMINUS_ALLOW_PRIVATE;
+  if (envBlocksPrivateNetworks()) return;
+  if (allowPrivateNetworks) {
+    // Already granted, by the environment or by an earlier switch-on: nothing to own.
+    if (process.env.TERMINUS_ALLOW_PRIVATE === '1') return;
+    process.env.TERMINUS_ALLOW_PRIVATE = '1';
+    networkPolicyEnvOwned = true;
+    return;
+  }
+  if (!networkPolicyEnvOwned) return;
+  delete process.env.TERMINUS_ALLOW_PRIVATE;
+  networkPolicyEnvOwned = false;
 }
 
 function loadNetworkState() {
-  if (networkPolicyLockedByEnv()) {
+  if (envBlocksPrivateNetworks()) {
     allowPrivateNetworks = false;
     return;
   }
-  if (
-    process.env.TERMINUS_ALLOW_PRIVATE === '1' ||
-    process.env.TERMINUS_NETWORK_POLICY === 'local' ||
-    process.env.TERMINUS_NETWORK_POLICY === 'private'
-  ) {
+  if (envGrantsPrivateNetworks()) {
+    // The environment decided it: keep the menu on and leave the variable untouched.
     allowPrivateNetworks = true;
-    applyNetworkPolicyEnv();
     return;
   }
   try {
