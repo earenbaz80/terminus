@@ -69,6 +69,10 @@ const START_CHIPS_LABEL = '[data-e2e="start-chips-label"]';
 const START_SIGN = 'pre.ascii-sign-start';
 // Por debajo del corte `sm` (640 px) y cerca de un móvil real.
 const NARROW_WIDTH = 432;
+// El otro lado del mismo corte: por encima, la etiqueta del grupo vuelve a verse.
+const WIDE_MIN_WIDTH = 640;
+// Ancho de escritorio con el que se sale de la ventana estrecha si limpiar no basta.
+const WIDE_WIDTH = 1280;
 const NARROW_QUERY = 'terminus e2e estrecho';
 const THEMES = {
   msdos: { id: 'ms-dos', bg: '#000080', rgb: 'rgb(0, 0, 128)' },
@@ -604,6 +608,41 @@ async function main() {
   assert.equal(hiddenRecent?.text, SEARCH_QUERY, 'La reciente oculta no es la anterior.');
 
   await cdp.send('Emulation.clearDeviceMetricsOverride');
+  // Limpiar la emulación no siempre devuelve el viewport: con la interfaz en
+  // alemán se queda en 433 px y el paso 7 no ve las chips recientes. Si el ancho
+  // real no vuelve, se fija uno de escritorio explícito.
+  if ((await cdp.evaluate('window.innerWidth')) <= WIDE_MIN_WIDTH) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: WIDE_WIDTH,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+  }
+
+  // Y aun así hay que esperar al repintado: el paso 7 busca chips visibles.: el paso 7 busca chips visibles y,
+  // sin esperar, las recientes seguían con el recorte de la ventana estrecha.
+  await waitForExpression(
+    cdp,
+    `(() => {
+      const label = document.querySelector(${JSON.stringify(START_CHIPS_LABEL)});
+      const recents = [...document.querySelectorAll(${JSON.stringify(RECENT_CHIP)})];
+      return {
+        width: window.innerWidth,
+        labelVisible: Boolean(label) && label.getClientRects().length > 0,
+        visibleRecents: recents
+          .filter((chip) => chip.getClientRects().length > 0)
+          .map((chip) => (chip.textContent ?? '').trim()),
+      };
+    })()`,
+    (state) =>
+      state.width > WIDE_MIN_WIDTH &&
+      state.labelVisible &&
+      state.visibleRecents.includes(SEARCH_QUERY) &&
+      state.visibleRecents.includes(NARROW_QUERY),
+    `el layout ancho de vuelta tras ${NARROW_WIDTH} px (etiqueta del grupo y las dos recientes visibles)`,
+    20000,
+  );
 
   pass(
     `ventana de ${NARROW_WIDTH} px: cartel entero (${narrow.fontSize.toFixed(2)} px, sin desbordar su caja) y solo la reciente más nueva («${NARROW_QUERY}») visible, con la etiqueta del grupo oculta.`,
