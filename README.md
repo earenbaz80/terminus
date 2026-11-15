@@ -69,7 +69,7 @@ npm run test:e2e:installed:ui # Windows: cabecera, tema persistido y búsqueda e
 npm run test:e2e:python-sandbox # Chromium real; requiere npx playwright install chromium
 ```
 
-Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 48 archivos y 253 pruebas.
+Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 49 archivos y 267 pruebas.
 
 `test:e2e:adblock` arranca `release/win-unpacked/Terminus.exe` con Playwright, sirve un fixture local de anuncios y comprueba el bloqueo de red y de popups. Después navega a `https://example.com/` para verificar que los cosméticos de EasyList se aplican al iframe proxificado; el fixture local no sirve para cosméticos porque `127.0.0.1` no tiene eTLD. Requiere haber ejecutado `npm run desktop:dir` antes.
 
@@ -158,6 +158,7 @@ La prueba automatizada equivalente es `npm run test:e2e:installed`, que además 
 - `src/components/HeaderBar.tsx`: pestañas, herramientas y fila superior con el menú de configuración y los controles de ventana.
 - `src/components/SettingsMenu.tsx`: menú de configuración con audio (mute, sintetizador, WAV), apariencia (temas, B&W, CRT) y red y privacidad (excepción de destinos privados).
 - `src/utils/networkPreference.ts`: preferencia de red que el renderer refleja y que el proceso principal aplica y guarda.
+- `shared/networkPolicyEnv.cjs`: precedencia única de las variables `TERMINUS_*` de red; la leen el servidor (`blockPrivateNetworks`) y el proceso principal.
 - `src/components/WindowControls.tsx`: minimizar, maximizar y cerrar sobre la API de escritorio.
 - `src/components/TerminusSearchPage.tsx`: resultados de búsqueda y sugerencias compartidas con la pantalla de inicio.
 - `src/components/TerminalView.tsx`: terminal interna y puente PTY.
