@@ -60,6 +60,7 @@
       "dist/**/*",
       "dist-electron/**/*",
       "electron/**/*",
+      "shared/**/*",
       "package.json"
     ],
     "win": {

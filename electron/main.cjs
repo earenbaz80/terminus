@@ -5,6 +5,7 @@ const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 const { parse: parseDomain } = require('tldts-experimental');
 const { isBlockedAdUrl } = require('./adblock.cjs');
 const { isPrivateAddress, isPrivateTargetUrl } = require('./networkPolicy.cjs');
+const { envDecidesPrivateNetworks } = require('../shared/networkPolicyEnv.cjs');
 const { startForwardProxy } = require('./forwardProxy.cjs');
 const { execFileSync, spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
@@ -75,21 +76,6 @@ let networkPolicyInProcess = false;
 
 const networkStatePath = () => path.join(app.getPath('userData'), NETWORK_STATE_FILENAME);
 
-/** Same precedence as `blockPrivateNetworks()` in src/utils/serverSecurity.ts. */
-function envDecidesPolicy() {
-  if (process.env.TERMINUS_BLOCK_PRIVATE === '1' || process.env.TERMINUS_NETWORK_POLICY === 'public') {
-    return 'block';
-  }
-  if (
-    process.env.TERMINUS_ALLOW_PRIVATE === '1' ||
-    process.env.TERMINUS_NETWORK_POLICY === 'local' ||
-    process.env.TERMINUS_NETWORK_POLICY === 'private'
-  ) {
-    return 'allow';
-  }
-  return null;
-}
-
 function readStoredAllowPrivate() {
   try {
     const parsed = JSON.parse(fs.readFileSync(networkStatePath(), 'utf8'));
@@ -109,7 +95,8 @@ function applyNetworkPolicyEnv() {
 }
 
 function loadNetworkState() {
-  const envPolicy = envDecidesPolicy();
+  // The same list the server uses per request, so the menu and the proxy agree.
+  const envPolicy = envDecidesPrivateNetworks(process.env);
   networkPolicySource = envPolicy ? 'env' : 'stored';
   allowPrivateNetworks = envPolicy ? envPolicy === 'allow' : readStoredAllowPrivate();
   applyNetworkPolicyEnv();
