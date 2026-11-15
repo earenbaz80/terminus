@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { selectSuites } from './e2e-suites.mjs';
-import { summarizeLogs } from './lib/e2e-report.mjs';
+import { preserveFailureLogs, runStamp, summarizeLogs } from './lib/e2e-report.mjs';
 
 const args = process.argv.slice(2);
 
@@ -92,10 +92,13 @@ function runSuite(suite) {
 fs.mkdirSync(outDir, { recursive: true });
 
 const startedAt = performance.now();
+const stamp = runStamp();
+const codes = new Map();
 let runCode = 0;
 if (!reportOnly) {
   for (const suite of suites) {
     const code = await runSuite(suite);
+    codes.set(suite.label, code);
     if (code !== 0 && runCode === 0) runCode = code;
   }
 }
@@ -104,6 +107,14 @@ const wallSeconds = (performance.now() - startedAt) / 1000;
 const summary = summarizeLogs(outDir, suites);
 for (const problem of summary.problems) {
   console.log(`::error::${problem.message}`);
+}
+
+// El log de cada suite se reescribe en la corrida siguiente: el de una que falló
+// se copia aparte para que su traza sobreviva. En verde no se copia nada.
+if (!reportOnly) {
+  for (const file of preserveFailureLogs(outDir, suites, { codes, problems: summary.problems, stamp })) {
+    console.log(`[e2e-run] log del fallo conservado: ${file}`);
+  }
 }
 
 const exitCode = runCode !== 0 ? runCode : summary.code;

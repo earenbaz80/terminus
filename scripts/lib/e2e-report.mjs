@@ -56,6 +56,41 @@ export function summarizeSuites(suites, readLog) {
   };
 }
 
+/** Sello único por corrida, sin caracteres que Windows no acepta en un nombre. */
+export function runStamp(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, '-');
+}
+
+/**
+ * Copia el log de las suites que fallaron a `failure-<label>-<sello>.log`.
+ *
+ * El log de cada suite se reescribe en cada corrida, así que el diagnóstico de un
+ * fallo intermitente (la traza del campo del paso 4, por ejemplo) se perdía en la
+ * corrida siguiente. La copia lleva sello para no pisar la de otro fallo, y solo
+ * se hace de las suites que fallaron: una corrida en verde no deja copias.
+ *
+ * Cuenta como fallida tanto la suite que salió con código distinto de 0 como la
+ * que salió con 0 pero cuyo recuento de pasos no cuadra (`problems`).
+ */
+export function preserveFailureLogs(directory, suites, { codes = new Map(), problems = [], stamp } = {}) {
+  const failedLogs = new Set([
+    ...suites.filter((suite) => (codes.get(suite.label) ?? 0) !== 0).map((suite) => suite.log),
+    ...problems.map((problem) => problem.log),
+  ]);
+  const saved = [];
+
+  for (const suite of suites) {
+    if (!failedLogs.has(suite.log)) continue;
+    const source = path.join(directory, suite.log);
+    if (!fs.existsSync(source)) continue;
+    const target = path.join(directory, `failure-${suite.label}-${stamp}.log`);
+    fs.copyFileSync(source, target);
+    saved.push(target);
+  }
+
+  return saved;
+}
+
 /** Recuento sobre los logs que hay en `directory`. */
 export function summarizeLogs(directory, suites = E2E_SUITES) {
   return summarizeSuites(suites, (suite) => {
