@@ -1,6 +1,9 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { E2E_SUITES, NETWORK_SKIP_DEV_ENV, selectSuites, suiteSteps } from '../e2e-suites.mjs';
-import { summarizeSuites } from './e2e-report.mjs';
+import { preserveFailureLogs, runStamp, summarizeSuites } from './e2e-report.mjs';
 
 const suites = [
   { label: 'ctrl-f', log: 'e2e-installed.log', steps: 3 },
@@ -110,6 +113,81 @@ describe('summarizeSuites', () => {
     expect(summary.problems[0].message).toBe(
       'e2e-installed.log declara 4/4 pasos; se esperaban 3/3.',
     );
+  });
+});
+
+describe('preserveFailureLogs', () => {
+  const makeDir = (logs) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-report-'));
+    for (const [name, text] of Object.entries(logs)) fs.writeFileSync(path.join(directory, name), text);
+    return directory;
+  };
+
+  it('conserva solo el log de la suite que falló', () => {
+    const logs = {
+      'e2e-installed.log': 'STEPS: 3/3\r\n',
+      'e2e-installed-ui.log': 'FAIL 4/11: traza\r\nSTEPS: 3/11\r\n',
+    };
+    const directory = makeDir(logs);
+
+    try {
+      const saved = preserveFailureLogs(directory, suites, {
+        codes: new Map([['ctrl-f', 0], ['ui', 1]]),
+        stamp: 'sellito',
+      });
+
+      expect(saved).toEqual([path.join(directory, 'failure-ui-sellito.log')]);
+      expect(fs.readFileSync(saved[0], 'utf8')).toBe(logs['e2e-installed-ui.log']);
+      expect(fs.readdirSync(directory).sort()).toEqual([
+        'e2e-installed-ui.log',
+        'e2e-installed.log',
+        'failure-ui-sellito.log',
+      ]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('no deja nada cuando todas salieron con 0 y los recuentos cuadran', () => {
+    const directory = makeDir({
+      'e2e-installed.log': 'STEPS: 3/3\r\n',
+      'e2e-installed-ui.log': 'STEPS: 6/6\r\n',
+    });
+
+    try {
+      const saved = preserveFailureLogs(directory, suites, {
+        codes: new Map([['ctrl-f', 0], ['ui', 0]]),
+        stamp: 'sellito',
+      });
+
+      expect(saved).toEqual([]);
+      expect(fs.readdirSync(directory).sort()).toEqual(['e2e-installed-ui.log', 'e2e-installed.log']);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('conserva el log de una suite que salió con 0 pero perdió pasos', () => {
+    const directory = makeDir({
+      'e2e-installed.log': 'STEPS: 2/3\r\n',
+      'e2e-installed-ui.log': 'STEPS: 6/6\r\n',
+    });
+
+    try {
+      const saved = preserveFailureLogs(directory, suites, {
+        codes: new Map([['ctrl-f', 0], ['ui', 0]]),
+        problems: [{ log: 'e2e-installed.log', message: 'x' }],
+        stamp: 'sellito',
+      });
+
+      expect(saved).toEqual([path.join(directory, 'failure-ctrl-f-sellito.log')]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('usa un sello apto para nombres de archivo en Windows', () => {
+    expect(runStamp(new Date('2026-11-15T13:50:07.123Z'))).toBe('2026-11-15T13-50-07-123Z');
   });
 });
 
