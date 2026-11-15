@@ -4,7 +4,7 @@ const { app, BrowserWindow, dialog, ipcMain, screen, session, shell } = require(
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 const { parse: parseDomain } = require('tldts-experimental');
 const { isBlockedAdUrl } = require('./adblock.cjs');
-const { isPrivateAddress, isPrivateHostname, isPrivateTargetUrl } = require('./networkPolicy.cjs');
+const { isPrivateAddress, isPrivateTargetUrl } = require('./networkPolicy.cjs');
 const { startForwardProxy } = require('./forwardProxy.cjs');
 const { execFileSync, spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
@@ -60,8 +60,10 @@ async function persistAdblockState() {
 loadAdblockState();
 
 // Private destinations are blocked by default; the settings menu can grant the
-// exception per installation. TERMINUS_BLOCK_PRIVATE=1 and NETWORK_POLICY=public
-// still win, so an explicit environment opt-out always fails closed.
+// same exception TERMINUS_ALLOW_PRIVATE gives, and only where that variable
+// applies: the local server's proxy and DNS. The REAL forward proxy and the
+// request guard keep rejecting private destinations. TERMINUS_BLOCK_PRIVATE=1 and
+// NETWORK_POLICY=public still win, so an explicit environment opt-out fails closed.
 const NETWORK_STATE_FILENAME = 'network-state.json';
 let allowPrivateNetworks = false;
 
@@ -1507,7 +1509,6 @@ async function isBlockedRemoteRequest(rawUrl) {
     return false;
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) return false;
-  if (allowPrivateNetworks) return false;
   if (isPrivateTargetUrl(rawUrl)) return true;
 
   const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
@@ -1561,7 +1562,6 @@ function isBlockedSubframeNavigation(rawUrl, appOrigin) {
     if (parsed.origin === appOrigin) return false;
     if (parsed.protocol === 'about:') return rawUrl !== 'about:blank';
     if (!['http:', 'https:'].includes(parsed.protocol)) return true;
-    if (allowPrivateNetworks) return false;
     return isPrivateTargetUrl(rawUrl);
   } catch {
     return true;
@@ -1660,7 +1660,7 @@ function createWindow(appUrl) {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url, disposition }) => {
-    if (!allowPrivateNetworks && isPrivateTargetUrl(url)) {
+    if (isPrivateTargetUrl(url)) {
       return { action: 'deny' };
     }
     const adBlocked = adblockEnabled && isBlockedAdUrl(url);
@@ -1755,12 +1755,7 @@ if (!hasSingleInstanceLock) {
 
     try {
       const appUrl = await resolveAppUrl();
-      // Closures rather than a snapshot: the settings menu can change the
-      // exception at any time and the proxy must honour it on the next request.
-      forwardProxy = await startForwardProxy({
-        isAddressPrivate: (address) => !allowPrivateNetworks && isPrivateAddress(address),
-        isHostnamePrivate: (hostname) => !allowPrivateNetworks && isPrivateHostname(hostname),
-      });
+      forwardProxy = await startForwardProxy();
       await configureRealNetworkProxy(appUrl, forwardProxy.port);
       // Give the cached engine a short head start so cosmetic filters exist on
       // the first paint. The download may continue in the background if slow.
