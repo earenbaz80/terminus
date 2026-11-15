@@ -10,7 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { E2E_SUITES } from '../e2e-suites.mjs';
+import { E2E_SUITES, expectedSteps } from '../e2e-suites.mjs';
 
 /** Última línea «STEPS: n/m» del log; la primera puede venir de una ejecución previa. */
 export const STEPS_PATTERN = /STEPS: (\d+)\/(\d+)/g;
@@ -35,11 +35,13 @@ export function summarizeSuites(suites, readLog) {
       continue;
     }
 
+    // `expectedSteps` baja el total cuando una suite omite un tramo en este entorno.
+    const expected = expectedSteps(suite);
     const counts = `${match[1]}/${match[2]}`;
-    if (counts !== `${suite.steps}/${suite.steps}`) {
+    if (counts !== `${expected}/${expected}`) {
       problems.push({
         log: suite.log,
-        message: `${suite.log} declara ${counts} pasos; se esperaban ${suite.steps}/${suite.steps}.`,
+        message: `${suite.log} declara ${counts} pasos; se esperaban ${expected}/${expected}.`,
       });
     }
     reports.push(`${suite.label} ${counts}`);
