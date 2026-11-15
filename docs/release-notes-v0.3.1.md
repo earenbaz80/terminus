@@ -23,7 +23,7 @@ No cambian lo que ves en la aplicación; son para que las suites digan la verdad
 - `npm test`: **49 archivos, 274 pruebas**, todas pasan.
 - `npm run desktop:build` e instalación `/S`: el `app.asar` instalado es idéntico al de `release/win-unpacked` antes de correr cualquier suite.
 - Cuatro suites sobre la app instalada: `ctrl-f 5/5 · ui 12/12 · ui-de 12/12 · network 16/16`, el paso de la carrera espera a que el `fetch` de la otra pestaña aparezca terminado (2,4 s medidos) en vez de dormir 4 s fijos.
-- Diez cadenas completas con el reportero: 10 de 10 en verde.
+- Estabilidad: 50 cadenas completas con el reportero (200 corridas de suite, 2 250 ejecuciones de paso) y ningún fallo, entre 55 y 61 s por cadena. La flakiness que describen las limitaciones se vio lanzando las suites sueltas con `node`, no por la ruta del reportero.
 - Dos pestañas: los dos escenarios descritos arriba, con 10 resultados en la pestaña correcta en ambos casos.
 
 ## Limitaciones conocidas
