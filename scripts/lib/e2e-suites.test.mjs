@@ -39,15 +39,15 @@ describe('suites del E2E instalado', () => {
     const ctrlF = E2E_SUITES.find((suite) => suite.label === 'ctrl-f');
     const skipping = { [NETWORK_SKIP_DEV_ENV]: '1' };
 
-    // La lista declara siempre los 11 pasos: el entorno no la reescribe.
-    expect(network.steps).toBe(11);
+    // La lista declara siempre los 13 pasos: el entorno no la reescribe.
+    expect(network.steps).toBe(13);
     expect(networkSkipsDev({})).toBe(false);
     expect(networkSkipsDev({ [NETWORK_SKIP_DEV_ENV]: '0' })).toBe(false);
     expect(networkSkipsDev(skipping)).toBe(true);
 
-    expect(expectedSteps(network, {})).toBe(11);
-    expect(expectedSteps(network, skipping)).toBe(5);
-    expect(suiteSteps('network', skipping)).toBe(5);
+    expect(expectedSteps(network, {})).toBe(13);
+    expect(expectedSteps(network, skipping)).toBe(7);
+    expect(suiteSteps('network', skipping)).toBe(7);
     // Otras suites no cambian con la variable.
     expect(expectedSteps(ctrlF, skipping)).toBe(ctrlF.steps);
   });
