@@ -179,10 +179,14 @@ async function runCommand(client, command) {
 }
 
 /**
- * Espera la página de resultados de `query`.
+ * Espera la página de resultados de `query`, ya asentada.
  *
  * Se comprueba por el campo de la página de resultados y por la dirección, no por el
- * texto visible: sirve igual en cualquier idioma.
+ * texto visible: sirve igual en cualquier idioma. Además exige `aria-busy="false"`
+ * en la sección de resultados, que es el indicador que la propia página usa para
+ * decir que el payload de la consulta ya está aplicado: con solo la dirección y el
+ * texto, el paso se daba por bueno con la petición todavía en vuelo y la siguiente
+ * búsqueda se lanzaba encima de ella.
  */
 async function waitForSearchResults(client, query, label) {
   return waitForExpression(
@@ -190,15 +194,18 @@ async function waitForSearchResults(client, query, label) {
     `(() => {
       const form = document.querySelector(${JSON.stringify(START_FORM)});
       const input = form?.querySelector('input[type="search"]') ?? null;
+      const results = document.querySelector('main section[aria-busy]');
       return {
         onStart: Boolean(document.querySelector(${JSON.stringify(START_INPUT)})),
         query: input?.value ?? null,
         address: document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)})?.value ?? null,
+        settled: results?.getAttribute('aria-busy') === 'false',
       };
     })()`,
     (state) =>
       !state.onStart &&
       state.query === query &&
+      state.settled &&
       /\bterminus:\/\/search\b/.test(state.address ?? ''),
     label,
     25000,
