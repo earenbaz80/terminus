@@ -14,6 +14,12 @@ export const NETWORK_PREFERENCE_KEY = 'terminus.network.v1';
 export interface NetworkState {
   allowPrivate: boolean;
   available: boolean;
+  /**
+   * False when the API server lives in another process (`npm run desktop:dev`),
+   * where the environment was inherited once at spawn: the decision is stored but
+   * only reaches the server on the next start, and the menu says so.
+   */
+  appliesLive: boolean;
 }
 
 const desktopApi = () =>
@@ -38,14 +44,14 @@ export const writeAllowPrivatePreference = (allowPrivate: boolean): void => {
 export async function readNetworkState(): Promise<NetworkState> {
   const api = desktopApi();
   if (!api?.getNetworkState) {
-    return { allowPrivate: readAllowPrivatePreference(), available: false };
+    return { allowPrivate: readAllowPrivatePreference(), available: false, appliesLive: false };
   }
   try {
     const state = await api.getNetworkState();
     writeAllowPrivatePreference(state.allowPrivate);
-    return state;
+    return { ...state, appliesLive: Boolean(state.appliesLive) };
   } catch {
-    return { allowPrivate: readAllowPrivatePreference(), available: false };
+    return { allowPrivate: readAllowPrivatePreference(), available: false, appliesLive: false };
   }
 }
 
@@ -53,13 +59,13 @@ export async function applyAllowPrivateNetworks(allowPrivate: boolean): Promise<
   writeAllowPrivatePreference(allowPrivate);
   const api = desktopApi();
   if (!api?.setAllowPrivateNetworks) {
-    return { allowPrivate, available: false };
+    return { allowPrivate, available: false, appliesLive: false };
   }
   try {
     const state = await api.setAllowPrivateNetworks(allowPrivate);
     writeAllowPrivatePreference(state.allowPrivate);
-    return state;
+    return { ...state, appliesLive: Boolean(state.appliesLive) };
   } catch {
-    return { allowPrivate, available: false };
+    return { allowPrivate, available: false, appliesLive: false };
   }
 }
