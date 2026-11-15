@@ -169,6 +169,46 @@ const menuState = async (page) => {
   };
 };
 
+/**
+ * Pulsa el interruptor del menú. El panel se repinta al aplicar el cambio y el botón
+ * puede desprenderse del DOM con el clic en curso (visto en el paso 7): se reintenta y
+ * queda anotado, y si aun así falla se imprime el estado del menú para clasificarlo.
+ */
+async function clickToggle(state, label) {
+  const page = state.toggle.page();
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await state.toggle.click({ timeout: 10000 });
+      return;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const detached = /detached from the DOM|not attached to the DOM/i.test(message);
+      console.log(
+        `${LOG} El interruptor no aceptó el clic (${label}, intento ${attempt}): ` +
+          (detached ? 'se desprendió del DOM' : message.split(String.fromCharCode(10))[0])
+      );
+      if (!detached) break;
+      await page.waitForTimeout(200);
+    }
+  }
+  const diagnostics = await page
+    .evaluate(`(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      const buttons = [...(dialog ? dialog.querySelectorAll('button') : [])];
+      return {
+        dialog: Boolean(dialog),
+        buttons: buttons.length,
+        pressed: buttons.map((button) => button.getAttribute('aria-pressed')),
+        text: (dialog ? dialog.textContent : '').slice(0, 160),
+      };
+    })()`)
+    .catch(() => null);
+  console.log(`${LOG} Menú al fallar el clic (${label}): ${JSON.stringify(diagnostics)}`);
+  throw lastError;
+}
+
 const launch = async (mode, profileDirectory) => {
   const options =
     mode === 'packaged'
@@ -218,7 +258,7 @@ async function enablePackaged(page, fixtureUrl, host) {
 
   expectStep(initial.hint === false, 'no hay aviso de reinicio: el servidor corre en el proceso principal');
 
-  await initial.toggle.click();
+  await clickToggle(initial, 'encender');
   const on = await menuState(page);
   const allowed = await probeView(page, fixtureUrl, ALLOWED_STATUS, 'activar empaquetada');
   expectStep(
@@ -239,7 +279,7 @@ async function reusePackaged(page, fixtureUrl, host) {
     `al relanzar sigue ACTIVO y el proxy acepta (aria-pressed=${restored.pressed}, status=${allowed.status})`
   );
 
-  await restored.toggle.click();
+  await clickToggle(restored, 'apagar');
   const off = await menuState(page);
   const blockedAgain = await probeView(page, fixtureUrl, BLOCKED_STATUS, 'desactivar empaquetada');
   expectStep(
@@ -261,7 +301,7 @@ async function checkDev(page, fixtureUrl, host) {
   );
   expectStep(initial.hint === true, 'desktop:dev avisa de que el cambio necesita reiniciar');
 
-  await initial.toggle.click();
+  await clickToggle(initial, 'encender');
   const on = await menuState(page);
   const stillBlocked = await probeView(page, fixtureUrl, BLOCKED_STATUS, 'activar desktop:dev');
   expectStep(
@@ -291,7 +331,7 @@ async function checkDevAfterRestart(page, fixtureUrl, host) {
 
   await expectDnsResolves(page, host, 'reiniciar desktop:dev (dns)', `y /api/dns resuelve ${host} tras reiniciar`);
 
-  await restored.toggle.click();
+  await clickToggle(restored, 'apagar');
   // El hijo conserva el entorno con el que arrancó: desactivar guarda el bloqueo
   // pero no cambia lo que sirve hasta el próximo reinicio.
   const stillServed = await probeView(page, fixtureUrl, ALLOWED_STATUS, 'desactivar tras reiniciar');

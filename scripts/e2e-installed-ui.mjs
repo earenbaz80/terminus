@@ -624,7 +624,26 @@ async function main() {
     (focused) => focused === true,
     'el campo del inicio enfocado al repetir "home"',
     20000,
-  );
+  ).catch(async (error) => {
+    const probe = await cdp
+      .evaluate(`(() => {
+        const input = document.querySelector(${JSON.stringify(START_INPUT)});
+        const active = document.activeElement;
+        const base = ${inputProbeExpression(ADDRESS_SELECTOR)};
+        return {
+          ...base,
+          startInput: Boolean(input),
+          startInputFocused: Boolean(input) && active === input,
+          activeElement:
+            (active?.tagName ?? '') +
+            (active?.getAttribute('aria-label') ? '[' + active.getAttribute('aria-label') + ']' : ''),
+          visibility: document.visibilityState,
+        };
+      })()`)
+      .catch(() => null);
+    console.log(`${LOG} Foco al repetir «home»: ${JSON.stringify(probe)}`);
+    throw error;
+  });
 
   pass(
     `la búsqueda del inicio queda como chip reciente (${recent.chips.length} guardada(s), ancla ${RECENT_CHIP}) y el campo recupera el foco al volver con "home".`,
@@ -870,7 +889,25 @@ async function main() {
       state.dom.onStart,
     'la segunda pestaña abierta, activa y en el inicio',
     20000,
-  );
+  ).catch(async (error) => {
+    const fingerprint = await cdp
+      .evaluate(`(() => {
+        let history = [];
+        try {
+          history = JSON.parse(localStorage.getItem(${JSON.stringify(HISTORY_KEY)}) ?? '[]');
+        } catch {}
+        return {
+          lastCommands: Array.isArray(history) ? history.slice(-4) : [],
+          dispatched: Array.isArray(history) && history.includes('tab new web'),
+          address: document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)})?.value ?? null,
+          documentFocused: document.hasFocus(),
+          activeElement: document.activeElement?.tagName ?? null,
+        };
+      })()`)
+      .catch(() => null);
+    console.log(`${LOG} Huella de «tab new web»: ${JSON.stringify(fingerprint)}`);
+    throw error;
+  });
   assert.deepEqual(
     opened.tabs[0],
     firstTab,
