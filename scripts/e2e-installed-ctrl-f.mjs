@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { suiteSteps } from './e2e-suites.mjs';
+import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
 import {
   assertInstalledMatchesBuild,
   captureFailureScreenshot,
@@ -69,8 +70,11 @@ const FIND_BAR_EXPRESSION = `(() => {
   return {
     open: Boolean(dialog),
     value: input?.value ?? null,
+    selStart: input?.selectionStart ?? null,
+    selEnd: input?.selectionEnd ?? null,
     status: status?.textContent?.trim() ?? '',
     focused: document.activeElement === input,
+    documentFocused: document.hasFocus(),
     frameMode,
   };
 })()`;
@@ -81,7 +85,6 @@ const FIND_FOCUS_EXPRESSION = `(() => {
   const bar = ${FIND_BAR_EXPRESSION};
   return {
     ...bar,
-    documentFocused: document.hasFocus(),
     activeElement: (document.activeElement?.tagName ?? '') +
       (document.activeElement?.getAttribute('aria-label')
         ? '[' + document.activeElement.getAttribute('aria-label') + ']'
@@ -304,7 +307,19 @@ async function openFindBar(client) {
   );
 }
 
+// Último valor leído del campo del buscador antes y después de escribirlo, para
+// poder compararlo si el buscador reporta un texto distinto al enviado.
+let findQuerySnapshots = null;
+
+const FIND_INPUT_SNAPSHOT = `(() => {
+  const input = ${FIND_DIALOG_EXPRESSION}?.querySelector('${FIND_INPUT_SELECTOR}');
+  return input
+    ? { value: input.value, selStart: input.selectionStart, focused: document.activeElement === input }
+    : null;
+})()`;
+
 async function setFindQuery(client, text) {
+  const before = await client.evaluate(FIND_INPUT_SNAPSHOT);
   const changed = await client.evaluate(`(() => {
     const dialog = ${FIND_DIALOG_EXPRESSION};
     const input = dialog?.querySelector('${FIND_INPUT_SELECTOR}');
@@ -315,6 +330,7 @@ async function setFindQuery(client, text) {
     return true;
   })()`);
   assert.equal(changed, true, 'No se encontró el campo del buscador.');
+  findQuerySnapshots = { text, before, after: await client.evaluate(FIND_INPUT_SNAPSHOT) };
 }
 
 /**
@@ -330,7 +346,12 @@ async function waitForSettledStatus(client, query, mode, previousStatus) {
   while (Date.now() < deadline) {
     const state = await client.evaluate(FIND_BAR_EXPRESSION);
     if (state.value !== query) {
-      throw new Error(`El buscador perdió el texto «${query}»: ahora tiene «${state.value}».`);
+      throw new Error(
+        `El buscador perdió el texto «${query}»: ahora tiene «${state.value}» ` +
+          `(selección ${state.selStart}-${state.selEnd}, campo enfocado ${state.focused}, ` +
+          `documento enfocado ${state.documentFocused}, ` +
+          `antes y después de escribirlo: ${JSON.stringify(findQuerySnapshots)}).`,
+      );
     }
 
     if (state.status && state.status !== previousStatus) {
@@ -727,9 +748,11 @@ async function main() {
     cdp,
     `(() => {
       const bar = ${FIND_BAR_EXPRESSION};
+      const probe = ${inputProbeExpression(ADDRESS_SELECTOR)};
       const toggle = document.querySelector('${FIND_TOGGLE}');
       const active = document.activeElement;
       return {
+        ...probe,
         ...bar,
         activeElement:
           (active?.tagName ?? '') +

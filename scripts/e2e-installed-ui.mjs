@@ -30,6 +30,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { suiteSteps } from './e2e-suites.mjs';
+import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
 import {
   assertInstalledMatchesBuild,
   captureFailureScreenshot,
@@ -492,7 +493,10 @@ async function main() {
       kind,
       value: input?.value ?? null,
       selStart: input?.selectionStart ?? null,
+      selEnd: input?.selectionEnd ?? null,
+      hasFocus: document.hasFocus(),
     });
+    window.__e2eSnap = snap;
     input?.addEventListener('input', () => snap('input'));
     input?.addEventListener('keydown', (event) => snap('keydown:' + event.key));
     document.addEventListener('submit', () => snap('submit'), true);
@@ -527,6 +531,7 @@ async function main() {
     5000,
   );
   await pressEnter(cdp);
+  await cdp.evaluate('window.__e2eSnap && window.__e2eSnap("after-enter")').catch(() => null);
 
   const searched = await waitForExpression(
     cdp,
@@ -554,7 +559,9 @@ async function main() {
     25000,
   ).catch(async (error) => {
     const trace = await cdp.evaluate('window.__e2eSubmitTrace').catch(() => null);
+    const probe = await cdp.evaluate(inputProbeExpression(ADDRESS_SELECTOR)).catch(() => null);
     console.log(`${LOG} El campo del inicio tenía estos valores antes del envío: ${JSON.stringify(trace)}`);
+    console.log(`${LOG} Foco y barra tras el Enter: ${JSON.stringify(probe)}`);
     throw error;
   });
 
@@ -793,9 +800,12 @@ async function main() {
     cdp,
     `(() => {
       const input = document.querySelector(${JSON.stringify(START_INPUT)});
+      const probe = ${inputProbeExpression(ADDRESS_SELECTOR)};
       return {
+        ...probe,
         onStart: Boolean(input),
         focused: Boolean(input) && document.activeElement === input,
+        field: input ? { value: input.value, selStart: input.selectionStart } : null,
       };
     })()`,
     (state) => state.onStart && state.focused,
