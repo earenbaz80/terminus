@@ -2171,11 +2171,7 @@ Tiempos aproximados de ida y vuelta en milisegundos:
  * responde después de la segunda, su payload pisaba el de la nueva y la página
  * mostraba una consulta que ya no era la de la barra de direcciones.
  */
-function isCurrentSearch(
-  tab: BrowserTab,
-  searchUrl: string,
-  cleanQuery: string
-): boolean {
+function isCurrentSearch(tab: BrowserTab, searchUrl: string, cleanQuery: string): boolean {
   return tab.url === searchUrl && tab.search?.query === cleanQuery;
 }
 
@@ -2292,8 +2288,6 @@ async function performWebSearch(
 
     ctx.setTabs((prev) =>
       prev.map((t) =>
-        // Una respuesta que llega tarde no puede pisar la búsqueda que la
-        // reemplazó: si la pestaña ya no está en esta, se descarta.
         t.id === ctx.activeTabId && isCurrentSearch(t, searchUrl, cleanQuery)
           ? {
               ...t,
