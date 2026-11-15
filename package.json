@@ -25,6 +25,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e:adblock": "node scripts/e2e-adblock-electron.mjs",
+    "test:e2e:network": "node scripts/e2e-network-policy.mjs",
     "test:e2e:installed": "node scripts/e2e-installed-ctrl-f.mjs",
     "test:e2e:installed:ui": "node scripts/e2e-installed-ui.mjs",
     "test:e2e:python-sandbox": "tsx scripts/e2e-python-sandbox-chromium.ts"

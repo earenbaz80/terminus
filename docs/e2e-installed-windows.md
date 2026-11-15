@@ -83,7 +83,7 @@ Sin la variable el job usa `windows-latest`: allí el escritorio no está garant
 
 ## Vigilancia del nocturno
 
-El cron de CI (`30 3 * * *`) dispara las tres suites en `main`. Que GitHub deje de lanzarlo —el cron se desactiva tras semanas de inactividad, el YAML pierde `on.schedule` o el workflow se renombra— no lo nota nadie: simplemente dejan de existir corridas y los PRs siguen en verde.
+El cron de CI (`30 3 * * *`) dispara las cuatro suites en `main`. Que GitHub deje de lanzarlo —el cron se desactiva tras semanas de inactividad, el YAML pierde `on.schedule` o el workflow se renombra— no lo nota nadie: simplemente dejan de existir corridas y los PRs siguen en verde.
 
 `nightly-watchdog.yml` corre a las 09:00 UTC y falla si el workflow de CI no tiene ninguna corrida **programada** en las últimas 36 h. La ventana tolera el retraso habitual del cron (24 h entre corridas más 12 h de margen) pero no una noche perdida, que a esa hora ya serían 48 h. Consulta el endpoint del workflow (`/actions/workflows/ci.yml/runs?event=schedule`), no el del repositorio, para que su propia corrida programada no tape el hueco; y no cuenta los `workflow_dispatch`, porque lo que se vigila es que dispare el cron.
 
@@ -132,18 +132,18 @@ Los pasos 1 a 7 son del job `checks`; el resto, de `windows`, que ejecuta en ord
 11. Instala el instalador más reciente con `/S`.
 12. Detiene cualquier instancia de Terminus que el instalador haya abierto.
 13. Define `TERMINUS_INSTALLED_EXE` apuntando a `%LOCALAPPDATA%\Programs\Terminus\Terminus.exe`.
-14. Ejecuta `node scripts/e2e-run.mjs`: recorre `scripts/e2e-suites.mjs`, lanza cada suite con `npm run`, guarda su salida en `artifacts/e2e/<log>` y falla con el primer código distinto de cero. El CI lo llama sin `--only`: cuando el gate pide el E2E corre las tres suites, así que la lista vive solo en `scripts/e2e-suites.mjs` y no se duplica en el workflow. Medido sobre la app instalada el 14 de noviembre de 2026, `ui` tarda 12 s, `ui-de` otros 12 s y `ctrl-f` 14 s, por eso la de alemán no se restringe a cambios de textos o i18n: sus pasos comprueban disposición, chips, pestañas e historial con cadenas alemanas, que se rompen por CSS o por estructura y no solo cuando cambian los textos. `ui-de` es la misma suite con `TERMINUS_E2E_LOCALE=de`.
-15. Compara el recuento: cada log tiene que cerrar con `STEPS: n/m` igual al total que declara su entrada de `scripts/e2e-suites.mjs`, la misma lista que leen los guiones, así que el esperado no se puede desincronizar. El resumen del paso queda `ctrl-f 5/5 · ui 11/11 · ui-de 11/11`.
+14. Ejecuta `node scripts/e2e-run.mjs`: recorre `scripts/e2e-suites.mjs`, lanza cada suite con `npm run`, guarda su salida en `artifacts/e2e/<log>` y falla con el primer código distinto de cero. El CI lo llama sin `--only`: cuando el gate pide el E2E corre las cuatro suites, así que la lista vive solo en `scripts/e2e-suites.mjs` y no se duplica en el workflow. Medido sobre la app instalada el 14 de noviembre de 2026, `ui` tarda 12 s, `ui-de` otros 12 s y `ctrl-f` 14 s, por eso la de alemán no se restringe a cambios de textos o i18n: sus pasos comprueban disposición, chips, pestañas e historial con cadenas alemanas, que se rompen por CSS o por estructura y no solo cuando cambian los textos. `ui-de` es la misma suite con `TERMINUS_E2E_LOCALE=de`. La cuarta, `network`, no usa el instalador: lanza el build de `release/win-unpacked` (`TERMINUS_BUILD_DIR` para apuntar a otro) y después `electron .` sobre el árbol de trabajo, porque su segundo tramo mide lo que pasa en `desktop:dev`, donde el servidor es un proceso hijo. Tarda unos 19 s con el build ya empaquetado (medido en local el 15 de noviembre de 2026) y no necesita internet: el destino 127.0.0.1 lo sirve el propio guion.
+15. Compara el recuento: cada log tiene que cerrar con `STEPS: n/m` igual al total que declara su entrada de `scripts/e2e-suites.mjs`, la misma lista que leen los guiones, así que el esperado no se puede desincronizar. El resumen del paso queda `ctrl-f 5/5 · ui 11/11 · ui-de 11/11 · network 11/11`.
 16. Publica los logs del E2E y un resumen del job, que incluye el estado del E2E de adblock (`OK`, `FAIL` u `Omitido (sin red)`) con el enlace a su captura.
 
 El E2E se ejecuta cuando se cumple una de estas condiciones:
 
-- un PR del propio repositorio que toque `src/`, `electron/`, `scripts/`, `assets/`, `package.json`/`package-lock.json` o la configuración del build (corre las tres suites, igual que las demás condiciones);
-- el nocturno de `main` (`cron` a las 03:30 UTC), que corre las tres suites;
+- un PR del propio repositorio que toque `src/`, `electron/`, `scripts/`, `assets/`, `package.json`/`package-lock.json` o la configuración del build (corre las cuatro suites, igual que las demás condiciones);
+- el nocturno de `main` (`cron` a las 03:30 UTC), que corre las cuatro suites;
 - `workflow_dispatch` con `run_installed_e2e = true`;
 - la variable `TERMINUS_RUN_INSTALLED_E2E = true`, que es la que activa el E2E en cada push a `main` (salvo en PRs desde forks); hoy vale `true` y se cambia en Settings → Secrets and variables → Actions → Variables.
 
-En push no se filtra por ficheros cambiados (comparar contra `github.event.before`): el E2E añade unos 56 s al job (18 s de instalación y 38 s de suites) y es la única corrida que prueba exactamente el commit publicado, incluidos los merges de solo documentación que en el PR se saltaron el E2E. Un filtro ahorraría esos 56 s en esos merges a cambio de un camino de respaldo para cuando `before` no existe (primer push o fuerza), justo donde un fallo silencioso dejaría `main` sin probar.
+En push no se filtra por ficheros cambiados (comparar contra `github.event.before`): el E2E añade unos 75 s al job (18 s de instalación y unos 57 s de suites, 19 de ellos de `network` con el build ya empaquetado) y es la única corrida que prueba exactamente el commit publicado, incluidos los merges de solo documentación que en el PR se saltaron el E2E. Un filtro ahorraría esos 56 s en esos merges a cambio de un camino de respaldo para cuando `before` no existe (primer push o fuerza), justo donde un fallo silencioso dejaría `main` sin probar.
 
 Un dispatch sobre una rama ya no cancela la corrida del PR: solo un push nuevo cancela la anterior de la misma referencia. En cualquier otro caso el E2E se omite, pero el build y el instalador sí se generan.
 
