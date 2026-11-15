@@ -235,6 +235,13 @@ const es = {
   'settings.adblock': 'Bloqueo de publicidad',
   'settings.adblockHint': 'EasyList oculta anuncios y bloquea rastreadores en las páginas abiertas.',
   'settings.adblockDesktopOnly': 'Disponible al abrir Terminus como aplicación de escritorio.',
+  'settings.network': 'Red y privacidad',
+  'settings.allowPrivate': 'Permitir destinos privados',
+  'settings.networkHint': 'El proxy y el DNS rechazan loopback, intranet y direcciones locales.',
+  'settings.allowPrivateHint':
+    'Los destinos privados quedan permitidos: úsalo solo en una red de confianza.',
+  'settings.networkDesktopOnly':
+    'Se cambia desde la aplicación de escritorio; en el navegador manda la configuración del servidor.',
   'settings.on': 'ACTIVO',
   'settings.off': 'INACTIVO',
   'settings.security': 'Seguridad',
@@ -972,6 +979,13 @@ const de: Record<MessageKey, string> = {
   'settings.adblock': 'Werbeblocker',
   'settings.adblockHint': 'EasyList blendet Werbung aus und blockiert Tracker auf geöffneten Seiten.',
   'settings.adblockDesktopOnly': 'Nur in der Desktop-App verfügbar.',
+  'settings.network': 'Netzwerk und Datenschutz',
+  'settings.allowPrivate': 'Private Ziele erlauben',
+  'settings.networkHint': 'Proxy und DNS blockieren Loopback, Intranet und lokale Adressen.',
+  'settings.allowPrivateHint':
+    'Private Ziele sind erlaubt: nur in einem vertrauenswürdigen Netz verwenden.',
+  'settings.networkDesktopOnly':
+    'Wird in der Desktop-App geändert; im Browser gilt die Serverkonfiguration.',
   'settings.on': 'AKTIV',
   'settings.off': 'INAKTIV',
   'settings.security': 'Sicherheit',
@@ -1707,6 +1721,13 @@ const fr: Record<MessageKey, string> = {
   'settings.adblock': 'Blocage des publicités',
   'settings.adblockHint': 'EasyList masque les publicités et bloque les traqueurs des pages ouvertes.',
   'settings.adblockDesktopOnly': "Disponible dans l'application de bureau.",
+  'settings.network': 'Réseau et confidentialité',
+  'settings.allowPrivate': 'Autoriser les destinations privées',
+  'settings.networkHint': 'Le proxy et le DNS refusent loopback, intranet et adresses locales.',
+  'settings.allowPrivateHint':
+    'Les destinations privées sont autorisées : à réserver à un réseau de confiance.',
+  'settings.networkDesktopOnly':
+    "Se règle depuis l'application de bureau ; dans le navigateur, la configuration du serveur décide.",
   'settings.on': 'ACTIF',
   'settings.off': 'INACTIF',
   'settings.security': 'Sécurité',
@@ -2441,6 +2462,13 @@ const it: Record<MessageKey, string> = {
   'settings.adblock': 'Blocco della pubblicità',
   'settings.adblockHint': 'EasyList nasconde gli annunci e blocca i tracker nelle pagine aperte.',
   'settings.adblockDesktopOnly': "Disponibile nell'app desktop.",
+  'settings.network': 'Rete e privacy',
+  'settings.allowPrivate': 'Consenti destinazioni private',
+  'settings.networkHint': 'Il proxy e il DNS rifiutano loopback, intranet e indirizzi locali.',
+  'settings.allowPrivateHint':
+    'Le destinazioni private sono consentite: usalo solo in una rete fidata.',
+  'settings.networkDesktopOnly':
+    "Si cambia dall'app desktop; nel browser vale la configurazione del server.",
   'settings.on': 'ATTIVO',
   'settings.off': 'INATTIVO',
   'settings.security': 'Sicurezza',
@@ -3176,6 +3204,13 @@ const en: Record<MessageKey, string> = {
   'settings.adblock': 'Ad blocking',
   'settings.adblockHint': 'EasyList hides ads and blocks trackers on the pages you open.',
   'settings.adblockDesktopOnly': 'Available in the desktop app.',
+  'settings.network': 'Network and privacy',
+  'settings.allowPrivate': 'Allow private destinations',
+  'settings.networkHint': 'The proxy and DNS refuse loopback, intranet and local addresses.',
+  'settings.allowPrivateHint':
+    'Private destinations are allowed: use it only on a trusted network.',
+  'settings.networkDesktopOnly':
+    'Changed from the desktop app; in a browser tab the server configuration decides.',
   'settings.on': 'ON',
   'settings.off': 'OFF',
   'settings.security': 'Security',

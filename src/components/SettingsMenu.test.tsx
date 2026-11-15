@@ -1,10 +1,18 @@
-import { describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { I18nProvider } from '../i18n';
 import { LOCALE_STORAGE_KEY } from '../i18n/locales';
 import { THEMES } from '../utils/themes';
 import type { ThemeId } from '../types';
+import { NETWORK_PREFERENCE_KEY } from '../utils/networkPreference';
 import { SettingsMenu } from './SettingsMenu';
+
+afterEach(() => {
+  cleanup();
+  delete window.terminusDesktop;
+  localStorage.removeItem(NETWORK_PREFERENCE_KEY);
+  localStorage.removeItem(LOCALE_STORAGE_KEY);
+});
 
 const themeNames = (locale: string): string[] => {
   localStorage.setItem(LOCALE_STORAGE_KEY, locale);
@@ -132,5 +140,77 @@ describe('SettingsMenu comportamiento', () => {
     expect(monoSelect.value).toBe('black-and-white');
     fireEvent.click(screen.getByTitle('B&W'));
     expect(back.onSelectTheme).toHaveBeenCalledWith('cyberpunk-obsidian');
+  });
+});
+
+const stubDesktopBridge = (network: {
+  getNetworkState: () => Promise<{ allowPrivate: boolean; available: boolean }>;
+  setAllowPrivateNetworks: (allowPrivate: boolean) => Promise<{ allowPrivate: boolean; available: boolean }>;
+}) => {
+  window.terminusDesktop = {
+    ...(window.terminusDesktop ?? {}),
+    ...network,
+  } as NonNullable<typeof window.terminusDesktop>;
+};
+
+const networkRegion = () =>
+  within(screen.getByRole('dialog', { name: 'Configuración' })).getByRole('region', {
+    name: 'Red y privacidad',
+  });
+
+describe('SettingsMenu red y privacidad', () => {
+  it('bloquea los destinos privados por defecto y lo explica en la sección', async () => {
+    renderSettings();
+    const region = networkRegion();
+    const toggle = await within(region).findByRole('button', { name: /Permitir destinos privados/ });
+
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(region.textContent).toContain('El proxy y el DNS rechazan loopback');
+    // Sin puente de escritorio el control queda inerte y se dice por qué.
+    expect(toggle).toHaveProperty('disabled', true);
+    expect(region.textContent).toContain('Se cambia desde la aplicación de escritorio');
+  });
+
+  it('alterna la excepción desde el escritorio y refleja lo que devuelve el proceso principal', async () => {
+    const getNetworkState = vi.fn().mockResolvedValue({ allowPrivate: false, available: true });
+    const setAllowPrivateNetworks = vi
+      .fn()
+      .mockResolvedValue({ allowPrivate: true, available: true });
+    stubDesktopBridge({ getNetworkState, setAllowPrivateNetworks });
+
+    renderSettings();
+    const region = networkRegion();
+    const toggle = await within(region).findByRole('button', { name: /Permitir destinos privados/ });
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('false'));
+    expect(toggle).toHaveProperty('disabled', false);
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(setAllowPrivateNetworks).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'));
+    expect(region.textContent).toContain('úsalo solo en una red de confianza');
+    expect(localStorage.getItem(NETWORK_PREFERENCE_KEY)).toBe('1');
+  });
+
+  it('mantiene el control en el estado que manda el proceso principal si el entorno lo bloquea', async () => {
+    // El proceso principal devuelve el valor efectivo: si el entorno fuerza el
+    // bloqueo, el clic no puede dejar el menú en «permitido».
+    const getNetworkState = vi.fn().mockResolvedValue({ allowPrivate: false, available: true });
+    const setAllowPrivateNetworks = vi
+      .fn()
+      .mockResolvedValue({ allowPrivate: false, available: true });
+    stubDesktopBridge({ getNetworkState, setAllowPrivateNetworks });
+
+    renderSettings();
+    const toggle = await within(networkRegion()).findByRole('button', {
+      name: /Permitir destinos privados/,
+    });
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('false'));
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(setAllowPrivateNetworks).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('false'));
+    expect(localStorage.getItem(NETWORK_PREFERENCE_KEY)).toBe('0');
   });
 });

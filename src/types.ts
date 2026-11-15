@@ -247,6 +247,9 @@ export interface TerminusDesktopApi {
   /** Ad-blocking switch owned by the Electron main process. */
   getAdblockState?(): Promise<{ enabled: boolean; available: boolean }>;
   setAdblockEnabled?(enabled: boolean): Promise<{ enabled: boolean; available: boolean }>;
+  /** Private-network policy owned by the Electron main process. */
+  getNetworkState?(): Promise<{ allowPrivate: boolean; available: boolean }>;
+  setAllowPrivateNetworks?(allowPrivate: boolean): Promise<{ allowPrivate: boolean; available: boolean }>;
 }
 
 export interface FrameContextMenuEvent {

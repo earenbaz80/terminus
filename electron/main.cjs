@@ -4,7 +4,7 @@ const { app, BrowserWindow, dialog, ipcMain, screen, session, shell } = require(
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 const { parse: parseDomain } = require('tldts-experimental');
 const { isBlockedAdUrl } = require('./adblock.cjs');
-const { isPrivateAddress, isPrivateTargetUrl } = require('./networkPolicy.cjs');
+const { isPrivateAddress, isPrivateHostname, isPrivateTargetUrl } = require('./networkPolicy.cjs');
 const { startForwardProxy } = require('./forwardProxy.cjs');
 const { execFileSync, spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
@@ -58,6 +58,65 @@ async function persistAdblockState() {
 }
 
 loadAdblockState();
+
+// Private destinations are blocked by default; the settings menu can grant the
+// exception per installation. TERMINUS_BLOCK_PRIVATE=1 and NETWORK_POLICY=public
+// still win, so an explicit environment opt-out always fails closed.
+const NETWORK_STATE_FILENAME = 'network-state.json';
+let allowPrivateNetworks = false;
+
+const networkStatePath = () => path.join(app.getPath('userData'), NETWORK_STATE_FILENAME);
+
+function networkPolicyLockedByEnv() {
+  return (
+    process.env.TERMINUS_BLOCK_PRIVATE === '1' || process.env.TERMINUS_NETWORK_POLICY === 'public'
+  );
+}
+
+// The local server reads TERMINUS_ALLOW_PRIVATE on every request, so mirroring the
+// decision there is enough for the proxy and the DNS endpoint of the packaged app.
+function applyNetworkPolicyEnv() {
+  if (networkPolicyLockedByEnv()) return;
+  if (allowPrivateNetworks) process.env.TERMINUS_ALLOW_PRIVATE = '1';
+  else delete process.env.TERMINUS_ALLOW_PRIVATE;
+}
+
+function loadNetworkState() {
+  if (networkPolicyLockedByEnv()) {
+    allowPrivateNetworks = false;
+    return;
+  }
+  if (
+    process.env.TERMINUS_ALLOW_PRIVATE === '1' ||
+    process.env.TERMINUS_NETWORK_POLICY === 'local' ||
+    process.env.TERMINUS_NETWORK_POLICY === 'private'
+  ) {
+    allowPrivateNetworks = true;
+    applyNetworkPolicyEnv();
+    return;
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(networkStatePath(), 'utf8'));
+    allowPrivateNetworks = parsed?.allowPrivate === true;
+  } catch {
+    // No stored preference: keep the safe default.
+  }
+  applyNetworkPolicyEnv();
+}
+
+async function persistNetworkState() {
+  try {
+    await fs.promises.writeFile(
+      networkStatePath(),
+      JSON.stringify({ allowPrivate: allowPrivateNetworks }),
+      'utf8'
+    );
+  } catch (error) {
+    console.warn('[Terminus] No se pudo guardar la política de red.', error);
+  }
+}
+
+loadNetworkState();
 let networkGuardOrigin = null;
 const dnsVerdictCache = new Map();
 const DNS_VERDICT_TTL_MS = 60_000;
@@ -1340,6 +1399,21 @@ function registerWindowIpc() {
     }
     return { enabled: adblockEnabled, available: true };
   });
+
+  ipcMain.handle('terminus:network:state', (event) => {
+    if (!windowForEvent(event)) return { allowPrivate: false, available: false };
+    return { allowPrivate: allowPrivateNetworks, available: true };
+  });
+
+  ipcMain.handle('terminus:network:set-allow-private', async (event, allowPrivate) => {
+    if (!windowForEvent(event)) return { allowPrivate: allowPrivateNetworks, available: false };
+    if (!networkPolicyLockedByEnv()) {
+      allowPrivateNetworks = Boolean(allowPrivate);
+      applyNetworkPolicyEnv();
+      await persistNetworkState();
+    }
+    return { allowPrivate: allowPrivateNetworks, available: true };
+  });
 }
 
 function isAppOriginUrl(value, appOrigin) {
@@ -1433,6 +1507,7 @@ async function isBlockedRemoteRequest(rawUrl) {
     return false;
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+  if (allowPrivateNetworks) return false;
   if (isPrivateTargetUrl(rawUrl)) return true;
 
   const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
@@ -1486,6 +1561,7 @@ function isBlockedSubframeNavigation(rawUrl, appOrigin) {
     if (parsed.origin === appOrigin) return false;
     if (parsed.protocol === 'about:') return rawUrl !== 'about:blank';
     if (!['http:', 'https:'].includes(parsed.protocol)) return true;
+    if (allowPrivateNetworks) return false;
     return isPrivateTargetUrl(rawUrl);
   } catch {
     return true;
@@ -1584,7 +1660,7 @@ function createWindow(appUrl) {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url, disposition }) => {
-    if (isPrivateTargetUrl(url)) {
+    if (!allowPrivateNetworks && isPrivateTargetUrl(url)) {
       return { action: 'deny' };
     }
     const adBlocked = adblockEnabled && isBlockedAdUrl(url);
@@ -1679,7 +1755,12 @@ if (!hasSingleInstanceLock) {
 
     try {
       const appUrl = await resolveAppUrl();
-      forwardProxy = await startForwardProxy();
+      // Closures rather than a snapshot: the settings menu can change the
+      // exception at any time and the proxy must honour it on the next request.
+      forwardProxy = await startForwardProxy({
+        isAddressPrivate: (address) => !allowPrivateNetworks && isPrivateAddress(address),
+        isHostnamePrivate: (hostname) => !allowPrivateNetworks && isPrivateHostname(hostname),
+      });
       await configureRealNetworkProxy(appUrl, forwardProxy.port);
       // Give the cached engine a short head start so cosmetic filters exist on
       // the first paint. The download may continue in the background if slow.

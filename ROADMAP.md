@@ -4,7 +4,7 @@ Este documento es la fuente de verdad de lo que falta. El repositorio no usa iss
 
 - Última release publicada: `0.3.0` (tag `v0.3.0`, 12 de noviembre de 2026), con instalador, `.blockmap`, ZIP y `SHA256SUMS.txt`.
 - Estado del proyecto: rediseño de interfaz e internacionalización (PR #11) mergeados en `main`, notas de release y README alineados con los artefactos publicados, y el E2E instalado del hito 0.3.0 pasado.
-- Verificación actual: `npm run lint` correcto (tsc y eslint), `npm test` con 47 archivos y 246 pruebas, cliente y servidor compilados, instalador `0.3.0` generado y `NotSigned`.
+- Verificación actual: `npm run lint` correcto (tsc y eslint), `npm test` con 48 archivos y 253 pruebas, cliente y servidor compilados, instalador `0.3.0` generado y `NotSigned`.
 - No hay fechas comprometidas. Los hitos se ordenan por prioridad, no por calendario.
 
 ## Decisiones cerradas
@@ -134,7 +134,7 @@ Limitaciones conocidas documentadas en el README; se abordan solo si aparece una
 ### 5. Backlog de producto — ideas, sin prioridad
 
 - Búsquedas recientes bajo el campo de inicio, mezcladas con las sugerencias fijas — **hecha**: las tres últimas consultas se guardan en `localStorage` (`termbrowser.recent-searches.v1`, sin distinguir mayúsculas y sin repetir), aparecen delante de las fijas sin duplicarlas y llevan el ancla `data-e2e="recent-search"`. Cubierta por `src/utils/recentSearches.test.ts` y seis casos del componente. Por debajo de `sm` (640 px) solo queda visible la reciente más nueva y la etiqueta se oculta, con clases de CSS, para que la fila no crezca a tres líneas; un reciente que ya sea sugerencia fija no se repite, de modo que esa chip no desaparece al recortar.
-- Sección de red y privacidad en el menú de configuración, en lugar de variables de entorno.
+- Sección de red y privacidad en el menú de configuración, en lugar de variables de entorno — **hecha**: el menú muestra un interruptor «Permitir destinos privados» que arranca bloqueado, con el motivo cuando no hay puente; el proceso principal guarda la decisión en `network-state.json` y la aplica al proxy y al DNS del servidor (a través de `TERMINUS_ALLOW_PRIVATE` en el mismo proceso), al forward proxy de REAL y al guard de peticiones, siempre por closure para que el cambio valga en la petición siguiente. `TERMINUS_BLOCK_PRIVATE=1` y `TERMINUS_NETWORK_POLICY=public` siguen ganando, así que un entorno que fuerce el bloqueo deja el control inerte y el menú lo refleja al recibir el estado efectivo. Cubierto por `src/utils/networkPreference.test.ts` y tres casos en `SettingsMenu.test.tsx`.
 - Definir si Terminus Search mantiene el proveedor externo actual o pasa a un índice propio.
 
 ## Fuera de alcance
