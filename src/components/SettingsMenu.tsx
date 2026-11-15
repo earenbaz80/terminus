@@ -49,7 +49,11 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
   const [customWavName, setCustomWavName] = useState<string | null>(() => soundEffects.getCustomSoundName());
   const [adblock, setAdblock] = useState<AdblockState>({ enabled: true, available: false });
   const [adblockBusy, setAdblockBusy] = useState(false);
-  const [network, setNetwork] = useState<NetworkState>({ allowPrivate: false, available: false });
+  const [network, setNetwork] = useState<NetworkState>({
+    allowPrivate: false,
+    available: false,
+    appliesLive: false,
+  });
   const [networkBusy, setNetworkBusy] = useState(false);
   const wavInputRef = useRef<HTMLInputElement>(null);
 
@@ -347,6 +351,9 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
               </p>
               {!network.available && (
                 <p className="mt-1 text-[9px] leading-4 opacity-45">{t('settings.networkDesktopOnly')}</p>
+              )}
+              {network.available && !network.appliesLive && (
+                <p className="mt-1 text-[9px] leading-4 opacity-45">{t('settings.networkRestart')}</p>
               )}
             </section>
 

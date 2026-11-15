@@ -66,6 +66,10 @@ loadAdblockState();
 // NETWORK_POLICY=public still win, so an explicit environment opt-out fails closed.
 const NETWORK_STATE_FILENAME = 'network-state.json';
 let allowPrivateNetworks = false;
+// True only when the API server runs inside this process (the packaged app).
+// `npm run desktop:dev` spawns `server.ts` as a child, so it inherits the
+// environment once and a runtime change only reaches it after a restart.
+let networkPolicyInProcess = false;
 // Only a variable Terminus wrote may be removed again: a TERMINUS_ALLOW_PRIVATE
 // that came from the user's environment belongs to the user, not to the switch.
 let networkPolicyEnvOwned = false;
@@ -225,8 +229,10 @@ async function startPackagedServer() {
   process.env.TERMINUS_DIST_DIR = distDirectory;
   process.env.TERMINUS_WORKSPACE_ROOT = workspaceDirectory;
 
-  // The bundle starts Express itself and serves the compiled SPA.
+  // The bundle starts Express itself and serves the compiled SPA. Because it runs
+  // here, the policy it reads per request is the one this process exposes.
   require(serverBundle);
+  networkPolicyInProcess = true;
 
   return {
     host: process.env.HOST,
@@ -1420,18 +1426,28 @@ function registerWindowIpc() {
   });
 
   ipcMain.handle('terminus:network:state', (event) => {
-    if (!windowForEvent(event)) return { allowPrivate: false, available: false };
-    return { allowPrivate: allowPrivateNetworks, available: true };
+    if (!windowForEvent(event)) return { allowPrivate: false, available: false, appliesLive: false };
+    return {
+      allowPrivate: allowPrivateNetworks,
+      available: true,
+      appliesLive: networkPolicyInProcess,
+    };
   });
 
   ipcMain.handle('terminus:network:set-allow-private', async (event, allowPrivate) => {
-    if (!windowForEvent(event)) return { allowPrivate: allowPrivateNetworks, available: false };
+    if (!windowForEvent(event)) {
+      return { allowPrivate: allowPrivateNetworks, available: false, appliesLive: false };
+    }
     if (!networkPolicyLockedByEnv()) {
       allowPrivateNetworks = Boolean(allowPrivate);
       applyNetworkPolicyEnv();
       await persistNetworkState();
     }
-    return { allowPrivate: allowPrivateNetworks, available: true };
+    return {
+      allowPrivate: allowPrivateNetworks,
+      available: true,
+      appliesLive: networkPolicyInProcess,
+    };
   });
 }
 
