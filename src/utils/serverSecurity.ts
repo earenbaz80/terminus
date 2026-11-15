@@ -11,6 +11,7 @@ import type { LookupFunction } from 'node:net';
 import sanitizeHtml from 'sanitize-html';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { isPrivateAddress, isPrivateHostname } from './networkPolicy';
+import { envBlocksPrivateNetworks } from '../../shared/networkPolicyEnv.cjs';
 
 export { isPrivateAddress, isPrivateHostname } from './networkPolicy';
 
@@ -44,20 +45,11 @@ export function resolveListenHost(rawHost: string | undefined): string {
 /**
  * Private destinations are blocked by default. A local/intranet opt-in must be
  * explicit; the legacy block switch and the public policy still win, so a mixed
- * configuration always fails closed.
+ * configuration always fails closed. The precedence itself lives in
+ * shared/networkPolicyEnv.cjs, which electron/main.cjs reads too.
  */
 export function blockPrivateNetworks(): boolean {
-  if (process.env.TERMINUS_BLOCK_PRIVATE === '1') return true;
-  if (process.env.TERMINUS_NETWORK_POLICY === 'public') return true;
-  if (process.env.TERMINUS_BLOCK_PRIVATE === '0') return false;
-  if (process.env.TERMINUS_ALLOW_PRIVATE === '1') return false;
-  if (
-    process.env.TERMINUS_NETWORK_POLICY === 'local' ||
-    process.env.TERMINUS_NETWORK_POLICY === 'private'
-  ) {
-    return false;
-  }
-  return true;
+  return envBlocksPrivateNetworks(process.env);
 }
 
 export type RemoteResolver = (
