@@ -10,16 +10,16 @@
  * que la lista no se duplica en el workflow. La de alemán no se restringe porque
  * cuesta lo mismo que `ui` (12 s cada una sobre la app instalada, 14 s `ctrl-f`).
  *
- * `network` tiene dos tramos: la app empaquetada (8 pasos) y `desktop:dev` (6).
+ * `network` tiene dos tramos: la app empaquetada (8 pasos) y `desktop:dev` (8).
  * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` deja solo el primero para aislar un runner
  * donde el tramo de desarrollo es inestable. La lista no cambia con el entorno:
- * siempre declara 14; lo que cambia es lo que esa corrida espera, y eso lo dice
+ * siempre declara 16; lo que cambia es lo que esa corrida espera, y eso lo dice
  * `expectedSteps()`, que leen tanto el guion como el recuento de `e2e-report`.
  */
 
 export const NETWORK_SKIP_DEV_ENV = 'TERMINUS_E2E_NETWORK_SKIP_DEV';
-/** Los pasos 6-11 de `network` son el tramo de `desktop:dev`. */
-const NETWORK_DEV_STEPS = 6;
+/** Los pasos 9-16 de `network` son el tramo de `desktop:dev`. */
+const NETWORK_DEV_STEPS = 8;
 
 export const networkSkipsDev = (env = process.env) => env[NETWORK_SKIP_DEV_ENV] === '1';
 
@@ -55,7 +55,7 @@ export const E2E_SUITES = [
     script: 'test:e2e:network',
     log: 'e2e-network-policy.log',
     locale: '',
-    steps: 14,
+    steps: 16,
   },
 ];
 
