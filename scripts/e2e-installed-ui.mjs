@@ -1096,8 +1096,24 @@ async function main() {
       if (inFlight.busy !== 'true') continue;
 
       // La segunda pestaña queda activa mientras la primera responde. Si la respuesta
-      // se aplicara a la pestaña activa, aquí aparecería la consulta nueva.
-      await sleep(4000);
+      // se aplicara a la pestaña activa, aquí aparecería la consulta nueva. En vez de
+      // dormir 4 s fijos se espera al fetch de la pestaña 1: el renderer es el mismo
+      // documento, así que su entrada de recurso aparece aquí, y cuando tiene
+      // `responseEnd` el payload ya viajó a su pestaña.
+      await waitForExpression(
+        cdp,
+        `(() => {
+          const name = '/api/search?q=' + ${JSON.stringify(encodeURIComponent(query))};
+          const entries = performance.getEntriesByType('resource')
+            .filter((entry) => entry.name.includes(name));
+          return { requests: entries.length, done: entries.some((entry) => entry.responseEnd > 0) };
+        })()`,
+        (state) => state.done,
+        'la respuesta de la búsqueda en vuelo',
+        15000,
+      );
+      // Un frame de margen para que React aplique el payload antes de mirar la otra.
+      await sleep(120);
       const otherTab = await waitForExpression(
         cdp,
         RESULTS_STATE_EXPRESSION,
