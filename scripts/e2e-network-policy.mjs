@@ -10,12 +10,13 @@
  *      el cambio rige en la petición siguiente; además, la decisión guardada se
  *      recupera al relanzar.
  *   2. `electron .`, donde el servidor es un proceso hijo que heredó el entorno
- *      al arrancar: el menú guarda la decisión, el proxy sigue bloqueando y
- *      aparece el aviso de reinicio. Al relanzar, la decisión guardada se aplica.
+ *      al arrancar: el menú guarda la decisión, el proxy y `/api/dns` siguen
+ *      bloqueando y aparece el aviso de reinicio. Al relanzar, la decisión
+ *      guardada se aplica.
  *
  * El fixture se levanta en este proceso, así que la prueba no necesita internet.
- * `/api/view` responde 502 cuando la política rechaza el destino privado: ese es
- * el código esperado del bloqueo, no un fallo (el 403 es solo para metadata).
+ * Cada endpoint tiene su forma de rechazar y es la esperada, no un fallo:
+ * `/api/view` responde 502 y `/api/dns` responde 403 con `error` de la política.
  *
  * Requisitos: Windows con sesión de escritorio interactiva, dependencias
  * instaladas y un build empaquetado al día (`npm run desktop:build`, o
@@ -74,11 +75,10 @@ const startFixture = () =>
     server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${server.address().port}/` }));
   });
 
-const viewUrl = (target) => `/api/view?url=${encodeURIComponent(target)}`;
-const dnsUrl = (host) => `/api/dns?host=${encodeURIComponent(host)}`;
+const DNS_BLOCKED_ERROR = 'DNS target blocked by network policy';
 
-/** El endpoint de DNS contesta JSON; si no lo es, el fallo se ve en la aserción. */
-const dnsPayload = (body) => {
+/** El endpoint de DNS contesta JSON; si no lo es, la aserción lo ve como `null`. */
+const parseJson = (body) => {
   try {
     return JSON.parse(body);
   } catch {
@@ -102,7 +102,13 @@ async function waitForStatus(page, url, expectedStatus, label) {
       { url, status: expectedStatus },
       { timeout: 15000, polling: 100 }
     );
-    return await handle.jsonValue();
+    const result = await handle.jsonValue();
+    // Si la pestaña se recarga a mitad del sondeo, Playwright resuelve con el
+    // último valor (un `false`) en vez de agotar el tiempo: que no pase inadvertido.
+    if (!result || typeof result !== 'object') {
+      throw new Error(`${label}: el sondeo de ${url} terminó sin ver el estado ${expectedStatus}`);
+    }
+    return result;
   } catch {
     // Sin el último estado, un timeout no dice si el servidor respondió otra cosa.
     const last = await page.evaluate(async (url) => (await fetch(url)).status, url);
@@ -110,11 +116,47 @@ async function waitForStatus(page, url, expectedStatus, label) {
   }
 }
 
+/** Sondea `/api/view` hasta el estado pedido y dice si sirvió el fixture. */
+const probeView = async (page, target, expectedStatus, label) => {
+  const { status, body } = await waitForStatus(
+    page,
+    `/api/view?url=${encodeURIComponent(target)}`,
+    expectedStatus,
+    label
+  );
+  return { status, served: body.includes('PROBE_OK') };
+};
+
+/** Sondea `/api/dns` hasta el estado pedido y devuelve el JSON (o `null`). */
+const probeDns = async (page, host, expectedStatus, label) => {
+  const { status, body } = await waitForStatus(
+    page,
+    `/api/dns?host=${encodeURIComponent(host)}`,
+    expectedStatus,
+    label
+  );
+  return { status, payload: parseJson(body) };
+};
+
+/** Paso: `/api/dns` rechaza el host por la política. */
+async function expectDnsBlocked(page, host, label, message) {
+  const { status, payload } = await probeDns(page, host, 403, label);
+  expectStep(payload?.error === DNS_BLOCKED_ERROR, `${message} (status=${status})`);
+}
+
+/** Paso: `/api/dns` resuelve el host del fixture. */
+async function expectDnsResolves(page, host, label, message) {
+  const { status, payload } = await probeDns(page, host, ALLOWED_STATUS, label);
+  const records = payload?.records ?? [];
+  expectStep(
+    records.some((record) => record.address === host),
+    `${message} (status=${status}, ${records.length} registro/s)`
+  );
+}
+
 const openMenu = async (page) => {
   await page.click('button[aria-haspopup="dialog"]');
-  const toggle = page.getByRole('button', { name: TOGGLE_LABELS });
-  await toggle.waitFor({ state: 'visible', timeout: 30000 });
-  return toggle;
+  await page.getByRole('button', { name: TOGGLE_LABELS }).waitFor({ state: 'visible', timeout: 30000 });
 };
 
 const menuState = async (page) => {
@@ -166,67 +208,53 @@ async function withApp(mode, profileDirectory, label, body) {
 async function enablePackaged(page, fixtureUrl, host) {
   await openMenu(page);
   const initial = await menuState(page);
-  const blockedView = await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'arranque empaquetado');
+  const blocked = await probeView(page, fixtureUrl, BLOCKED_STATUS, 'arranque empaquetado');
   expectStep(
-    initial.pressed === false && blockedView.status === BLOCKED_STATUS,
-    `arranca INACTIVO y el proxy rechaza 127.0.0.1 (aria-pressed=${initial.pressed}, status=${blockedView.status})`
+    initial.pressed === false && blocked.status === BLOCKED_STATUS,
+    `arranca INACTIVO y el proxy rechaza ${host} (aria-pressed=${initial.pressed}, status=${blocked.status})`
   );
 
-  const blockedDns = await waitForStatus(page, dnsUrl(host), 403, 'dns bloqueado');
-  expectStep(
-    dnsPayload(blockedDns.body)?.error === 'DNS target blocked by network policy',
-    `y /api/dns rechaza ${host} (status=${blockedDns.status})`
-  );
+  await expectDnsBlocked(page, host, 'dns bloqueado', `y /api/dns rechaza ${host}`);
 
   expectStep(initial.hint === false, 'no hay aviso de reinicio: el servidor corre en el proceso principal');
 
   await initial.toggle.click();
   const on = await menuState(page);
-  const allowedView = await waitForStatus(page, viewUrl(fixtureUrl), ALLOWED_STATUS, 'activar empaquetada');
+  const allowed = await probeView(page, fixtureUrl, ALLOWED_STATUS, 'activar empaquetada');
   expectStep(
-    on.pressed === true && allowedView.body.includes('PROBE_OK'),
-    `al activar el proxy devuelve el fixture (aria-pressed=${on.pressed}, status=${allowedView.status})`
+    on.pressed === true && allowed.served,
+    `al activar el proxy devuelve el fixture (aria-pressed=${on.pressed}, status=${allowed.status})`
   );
 
-  const allowedDns = await waitForStatus(page, dnsUrl(host), ALLOWED_STATUS, 'dns activado');
-  const records = dnsPayload(allowedDns.body)?.records ?? [];
-  expectStep(
-    records.some((record) => record.address === host),
-    `al activar /api/dns resuelve ${host} (status=${allowedDns.status}, ${records.length} registro/s)`
-  );
+  await expectDnsResolves(page, host, 'dns activado', `al activar /api/dns resuelve ${host}`);
 }
 
-/** Pasos 4-5: la decisión guardada se recupera al relanzar y se puede deshacer. */
 /** Pasos 6-8: la preferencia sobrevive al relanzar y al desactivar vuelve el bloqueo. */
 async function reusePackaged(page, fixtureUrl, host) {
   await openMenu(page);
   const restored = await menuState(page);
-  const allowed = await waitForStatus(page, viewUrl(fixtureUrl), ALLOWED_STATUS, 'relanzar empaquetada');
+  const allowed = await probeView(page, fixtureUrl, ALLOWED_STATUS, 'relanzar empaquetada');
   expectStep(
-    restored.pressed === true && allowed.body.includes('PROBE_OK'),
+    restored.pressed === true && allowed.served,
     `al relanzar sigue ACTIVO y el proxy acepta (aria-pressed=${restored.pressed}, status=${allowed.status})`
   );
 
   await restored.toggle.click();
   const off = await menuState(page);
-  const blockedAgain = await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'desactivar empaquetada');
+  const blockedAgain = await probeView(page, fixtureUrl, BLOCKED_STATUS, 'desactivar empaquetada');
   expectStep(
     off.pressed === false && blockedAgain.status === BLOCKED_STATUS,
     `al desactivar vuelve a INACTIVO y el proxy rechaza (aria-pressed=${off.pressed}, status=${blockedAgain.status})`
   );
 
-  const blockedDns = await waitForStatus(page, dnsUrl(host), 403, 'desactivar empaquetada (dns)');
-  expectStep(
-    dnsPayload(blockedDns.body)?.error === 'DNS target blocked by network policy',
-    `y /api/dns vuelve a rechazar ${host} (status=${blockedDns.status})`
-  );
+  await expectDnsBlocked(page, host, 'desactivar empaquetada (dns)', `y /api/dns vuelve a rechazar ${host}`);
 }
 
 /** Pasos 9-13: `desktop:dev` guarda la decisión pero el servidor hijo no la recibe. */
 async function checkDev(page, fixtureUrl, host) {
   await openMenu(page);
   const initial = await menuState(page);
-  const blocked = await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'arranque desktop:dev');
+  const blocked = await probeView(page, fixtureUrl, BLOCKED_STATUS, 'arranque desktop:dev');
   expectStep(
     initial.pressed === false && blocked.status === BLOCKED_STATUS,
     `desktop:dev arranca INACTIVO y el proxy rechaza (aria-pressed=${initial.pressed}, status=${blocked.status})`
@@ -235,16 +263,17 @@ async function checkDev(page, fixtureUrl, host) {
 
   await initial.toggle.click();
   const on = await menuState(page);
-  const stillBlocked = await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'activar desktop:dev');
+  const stillBlocked = await probeView(page, fixtureUrl, BLOCKED_STATUS, 'activar desktop:dev');
   expectStep(
     on.pressed === true && stillBlocked.status === BLOCKED_STATUS,
     `el menú guarda ACTIVO pero el servidor hijo sigue rechazando (status=${stillBlocked.status})`
   );
 
-  const stillBlockedDns = await waitForStatus(page, dnsUrl(host), 403, 'activar desktop:dev (dns)');
-  expectStep(
-    dnsPayload(stillBlockedDns.body)?.error === 'DNS target blocked by network policy',
-    `y /api/dns sigue rechazando ${host} en el servidor hijo (status=${stillBlockedDns.status})`
+  await expectDnsBlocked(
+    page,
+    host,
+    'activar desktop:dev (dns)',
+    `y /api/dns sigue rechazando ${host} en el servidor hijo`
   );
 
   expectStep(on.hint === true, 'el menú no finge que el cambio se aplicó');
@@ -254,23 +283,23 @@ async function checkDev(page, fixtureUrl, host) {
 async function checkDevAfterRestart(page, fixtureUrl, host) {
   await openMenu(page);
   const restored = await menuState(page);
-  const allowed = await waitForStatus(page, viewUrl(fixtureUrl), ALLOWED_STATUS, 'reiniciar desktop:dev');
+  const allowed = await probeView(page, fixtureUrl, ALLOWED_STATUS, 'reiniciar desktop:dev');
   expectStep(
-    restored.pressed === true && allowed.body.includes('PROBE_OK'),
+    restored.pressed === true && allowed.served,
     `la decisión guardada se aplica al reiniciar (aria-pressed=${restored.pressed}, status=${allowed.status})`
   );
 
-  const allowedDns = await waitForStatus(page, dnsUrl(host), ALLOWED_STATUS, 'reiniciar desktop:dev (dns)');
-  const records = dnsPayload(allowedDns.body)?.records ?? [];
-  expectStep(
-    records.some((record) => record.address === host),
-    `y /api/dns resuelve ${host} tras reiniciar (status=${allowedDns.status}, ${records.length} registro/s)`
-  );
+  await expectDnsResolves(page, host, 'reiniciar desktop:dev (dns)', `y /api/dns resuelve ${host} tras reiniciar`);
 
   await restored.toggle.click();
+  // El hijo conserva el entorno con el que arrancó: desactivar guarda el bloqueo
+  // pero no cambia lo que sirve hasta el próximo reinicio.
+  const stillServed = await probeView(page, fixtureUrl, ALLOWED_STATUS, 'desactivar tras reiniciar');
   const off = await menuState(page);
-  await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'desactivar tras reiniciar');
-  expectStep(off.pressed === false, 'desactivar deja la preferencia guardada en bloqueado');
+  expectStep(
+    off.pressed === false && stillServed.served,
+    `desactivar guarda el bloqueo pero el servidor hijo sigue sirviendo (aria-pressed=${off.pressed}, status=${stillServed.status})`
+  );
 }
 
 async function main() {
