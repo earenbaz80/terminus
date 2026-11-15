@@ -1,7 +1,9 @@
 /**
  * E2E de la sección «Red y privacidad»: el interruptor tiene que decir la verdad.
  *
- * Recorre clic → IPC → petición HTTP con la app real en las dos modalidades:
+ * Recorre clic → IPC → petición HTTP con la app real en las dos modalidades,
+ * contra `/api/view` y `/api/dns`, que son los dos endpoints que aplican la
+ * política:
  *
  *   1. App empaquetada (`TERMINUS_BUILD_DIR/Terminus.exe`, por defecto
  *      `release/win-unpacked`). El servidor se carga en el mismo proceso, así que
@@ -19,7 +21,7 @@
  * instaladas y un build empaquetado al día (`npm run desktop:build`, o
  * `electron-builder --dir` en un directorio aparte con `TERMINUS_BUILD_DIR`).
  *
- * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` omite el tramo de `desktop:dev` (pasos 6-11)
+ * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` omite el tramo de `desktop:dev` (pasos 8-13)
  * y deja solo la app empaquetada, para aislar un runner donde arrancar el
  * servidor en desarrollo es inestable. El total esperado baja a 5 en el mismo
  * módulo que lee el ejecutor, así que el recuento sigue cuadrando.
@@ -72,34 +74,39 @@ const startFixture = () =>
     server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${server.address().port}/` }));
   });
 
-const probeProxy = (page, target) =>
-  page.evaluate(async (url) => {
-    const response = await fetch(`/api/view?url=${encodeURIComponent(url)}`);
-    const body = await response.text();
-    return { status: response.status, served: body.includes('PROBE_OK') };
-  }, target);
+const viewUrl = (target) => `/api/view?url=${encodeURIComponent(target)}`;
+const dnsUrl = (host) => `/api/dns?host=${encodeURIComponent(host)}`;
+
+/** El endpoint de DNS contesta JSON; si no lo es, el fallo se ve en la aserción. */
+const dnsPayload = (body) => {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+};
 
 /**
- * Espera a que `/api/view` dé el estado esperado. El sondeo lo hace el navegador:
- * tras el clic el IPC es asíncrono, así que la primera petición puede llegar antes
- * de que el proceso principal cambie la política.
+ * Espera a que un endpoint del servidor dé el estado esperado. El sondeo lo hace
+ * el navegador: tras el clic el IPC es asíncrono, así que la primera petición
+ * puede llegar antes de que el proceso principal cambie la política.
  */
-async function waitForProxy(page, target, expectedStatus, label) {
+async function waitForStatus(page, url, expectedStatus, label) {
   try {
     const handle = await page.waitForFunction(
       async ({ url, status }) => {
-        const response = await fetch(`/api/view?url=${encodeURIComponent(url)}`);
+        const response = await fetch(url);
         const body = await response.text();
-        return response.status === status ? { status, served: body.includes('PROBE_OK') } : false;
+        return response.status === status ? { status, body } : false;
       },
-      { url: target, status: expectedStatus },
+      { url, status: expectedStatus },
       { timeout: 15000, polling: 100 }
     );
     return await handle.jsonValue();
   } catch {
-    // Sin el último estado, un timeout no dice si el proxy respondió otra cosa.
-    const last = await probeProxy(page, target);
-    throw new Error(`${label}: se esperaba ${expectedStatus} y /api/view respondió ${last.status}`);
+    // Sin el último estado, un timeout no dice si el servidor respondió otra cosa.
+    const last = await page.evaluate(async (url) => (await fetch(url)).status, url);
+    throw new Error(`${label}: se esperaba ${expectedStatus} en ${url} y respondió ${last}`);
   }
 }
 
@@ -155,23 +162,37 @@ async function withApp(mode, profileDirectory, label, body) {
   }
 }
 
-/** Pasos 1-3: arranque bloqueado y activación en caliente. */
-async function enablePackaged(page, fixtureUrl) {
+/** Pasos 1-5: arranque bloqueado, activación en caliente y ambos endpoints de la política. */
+async function enablePackaged(page, fixtureUrl, host) {
   await openMenu(page);
   const initial = await menuState(page);
-  const blocked = await waitForProxy(page, fixtureUrl, BLOCKED_STATUS, 'arranque empaquetado');
+  const blockedView = await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'arranque empaquetado');
   expectStep(
-    initial.pressed === false && blocked.status === BLOCKED_STATUS,
-    `arranca INACTIVO y el proxy rechaza 127.0.0.1 (aria-pressed=${initial.pressed}, status=${blocked.status})`
+    initial.pressed === false && blockedView.status === BLOCKED_STATUS,
+    `arranca INACTIVO y el proxy rechaza 127.0.0.1 (aria-pressed=${initial.pressed}, status=${blockedView.status})`
   );
+
+  const blockedDns = await waitForStatus(page, dnsUrl(host), 403, 'dns bloqueado');
+  expectStep(
+    dnsPayload(blockedDns.body)?.error === 'DNS target blocked by network policy',
+    `y /api/dns rechaza ${host} (status=${blockedDns.status})`
+  );
+
   expectStep(initial.hint === false, 'no hay aviso de reinicio: el servidor corre en el proceso principal');
 
   await initial.toggle.click();
   const on = await menuState(page);
-  const allowed = await waitForProxy(page, fixtureUrl, ALLOWED_STATUS, 'activar empaquetada');
+  const allowedView = await waitForStatus(page, viewUrl(fixtureUrl), ALLOWED_STATUS, 'activar empaquetada');
   expectStep(
-    on.pressed === true && allowed.served,
-    `al activar el proxy devuelve el fixture (aria-pressed=${on.pressed}, status=${allowed.status})`
+    on.pressed === true && allowedView.body.includes('PROBE_OK'),
+    `al activar el proxy devuelve el fixture (aria-pressed=${on.pressed}, status=${allowedView.status})`
+  );
+
+  const allowedDns = await waitForStatus(page, dnsUrl(host), ALLOWED_STATUS, 'dns activado');
+  const records = dnsPayload(allowedDns.body)?.records ?? [];
+  expectStep(
+    records.some((record) => record.address === host),
+    `al activar /api/dns resuelve ${host} (status=${allowedDns.status}, ${records.length} registro/s)`
   );
 }
 
@@ -179,15 +200,15 @@ async function enablePackaged(page, fixtureUrl) {
 async function reusePackaged(page, fixtureUrl) {
   await openMenu(page);
   const restored = await menuState(page);
-  const allowed = await waitForProxy(page, fixtureUrl, ALLOWED_STATUS, 'relanzar empaquetada');
+  const allowed = await waitForStatus(page, viewUrl(fixtureUrl), ALLOWED_STATUS, 'relanzar empaquetada');
   expectStep(
-    restored.pressed === true && allowed.served,
+    restored.pressed === true && allowed.body.includes('PROBE_OK'),
     `al relanzar sigue ACTIVO y el proxy acepta (aria-pressed=${restored.pressed}, status=${allowed.status})`
   );
 
   await restored.toggle.click();
   const off = await menuState(page);
-  const blockedAgain = await waitForProxy(page, fixtureUrl, BLOCKED_STATUS, 'desactivar empaquetada');
+  const blockedAgain = await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'desactivar empaquetada');
   expectStep(
     off.pressed === false && blockedAgain.status === BLOCKED_STATUS,
     `al desactivar vuelve a INACTIVO y el proxy rechaza (aria-pressed=${off.pressed}, status=${blockedAgain.status})`
@@ -198,7 +219,7 @@ async function reusePackaged(page, fixtureUrl) {
 async function checkDev(page, fixtureUrl) {
   await openMenu(page);
   const initial = await menuState(page);
-  const blocked = await waitForProxy(page, fixtureUrl, BLOCKED_STATUS, 'arranque desktop:dev');
+  const blocked = await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'arranque desktop:dev');
   expectStep(
     initial.pressed === false && blocked.status === BLOCKED_STATUS,
     `desktop:dev arranca INACTIVO y el proxy rechaza (aria-pressed=${initial.pressed}, status=${blocked.status})`
@@ -207,9 +228,9 @@ async function checkDev(page, fixtureUrl) {
 
   await initial.toggle.click();
   const on = await menuState(page);
-  const stillBlocked = await waitForProxy(page, fixtureUrl, BLOCKED_STATUS, 'activar desktop:dev');
+  const stillBlocked = await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'activar desktop:dev');
   expectStep(
-    on.pressed === true && stillBlocked.status === BLOCKED_STATUS && !stillBlocked.served,
+    on.pressed === true && stillBlocked.status === BLOCKED_STATUS,
     `el menú guarda ACTIVO pero el servidor hijo sigue rechazando (status=${stillBlocked.status})`
   );
   expectStep(on.hint === true, 'el menú no finge que el cambio se aplicó');
@@ -219,31 +240,33 @@ async function checkDev(page, fixtureUrl) {
 async function checkDevAfterRestart(page, fixtureUrl) {
   await openMenu(page);
   const restored = await menuState(page);
-  const allowed = await waitForProxy(page, fixtureUrl, ALLOWED_STATUS, 'reiniciar desktop:dev');
+  const allowed = await waitForStatus(page, viewUrl(fixtureUrl), ALLOWED_STATUS, 'reiniciar desktop:dev');
   expectStep(
-    restored.pressed === true && allowed.served,
+    restored.pressed === true && allowed.body.includes('PROBE_OK'),
     `la decisión guardada se aplica al reiniciar (aria-pressed=${restored.pressed}, status=${allowed.status})`
   );
 
   await restored.toggle.click();
   const off = await menuState(page);
-  await waitForProxy(page, fixtureUrl, BLOCKED_STATUS, 'desactivar tras reiniciar');
+  await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'desactivar tras reiniciar');
   expectStep(off.pressed === false, 'desactivar deja la preferencia guardada en bloqueado');
 }
 
 async function main() {
   const fixture = await startFixture();
+  // El host del fixture es también el destino que consulta /api/dns.
+  const host = new URL(fixture.url).hostname;
   // El prefijo encaja con `scripts/clean-release.cjs`, que barre perfiles huérfanos.
   const packagedProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'terminus-e2e-'));
   const devProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'terminus-e2e-'));
   try {
     console.log(`${LOG} --- app empaquetada: ${packagedExecutable()} ---`);
-    await withApp('packaged', packagedProfile, 'packaged', (page) => enablePackaged(page, fixture.url));
+    await withApp('packaged', packagedProfile, 'packaged', (page) => enablePackaged(page, fixture.url, host));
     await withApp('packaged', packagedProfile, 'packaged-restart', (page) => reusePackaged(page, fixture.url));
 
     if (SKIP_DEV) {
       // Visible en el log y en el resumen: omitir el tramo no puede pasar inadvertido.
-      console.log(`${LOG} OMITIDO desktop:dev (pasos 6-11): ${NETWORK_SKIP_DEV_ENV}=1`);
+      console.log(`${LOG} OMITIDO desktop:dev (pasos 8-13): ${NETWORK_SKIP_DEV_ENV}=1`);
     } else {
       console.log(`${LOG} --- desktop:dev ---`);
       await withApp('dev', devProfile, 'dev', (page) => checkDev(page, fixture.url));
