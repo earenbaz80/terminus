@@ -19,6 +19,11 @@
  * instaladas y un build empaquetado al día (`npm run desktop:build`, o
  * `electron-builder --dir` en un directorio aparte con `TERMINUS_BUILD_DIR`).
  *
+ * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` omite el tramo de `desktop:dev` (pasos 6-11)
+ * y deja solo la app empaquetada, para aislar un runner donde arrancar el
+ * servidor en desarrollo es inestable. El total esperado baja a 5 en el mismo
+ * módulo que lee el ejecutor, así que el recuento sigue cuadrando.
+ *
  * Códigos de salida: 0 si todo pasa, 1 si hay regresión o falta el build.
  */
 import assert from 'node:assert/strict';
@@ -27,11 +32,12 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright';
-import { suiteSteps } from './e2e-suites.mjs';
+import { NETWORK_SKIP_DEV_ENV, networkSkipsDev, suiteSteps } from './e2e-suites.mjs';
 
 const LOG = '[e2e-network]';
 // El ejecutor del CI compara esta cifra con la que declara `scripts/e2e-suites.mjs`.
 const TOTAL_STEPS = suiteSteps('network');
+const SKIP_DEV = networkSkipsDev();
 
 const BLOCKED_STATUS = 502;
 const ALLOWED_STATUS = 200;
@@ -235,10 +241,15 @@ async function main() {
     await withApp('packaged', packagedProfile, 'packaged', (page) => enablePackaged(page, fixture.url));
     await withApp('packaged', packagedProfile, 'packaged-restart', (page) => reusePackaged(page, fixture.url));
 
-    console.log(`${LOG} --- desktop:dev ---`);
-    await withApp('dev', devProfile, 'dev', (page) => checkDev(page, fixture.url));
-    console.log(`${LOG} --- desktop:dev tras reiniciar ---`);
-    await withApp('dev', devProfile, 'dev-restart', (page) => checkDevAfterRestart(page, fixture.url));
+    if (SKIP_DEV) {
+      // Visible en el log y en el resumen: omitir el tramo no puede pasar inadvertido.
+      console.log(`${LOG} OMITIDO desktop:dev (pasos 6-11): ${NETWORK_SKIP_DEV_ENV}=1`);
+    } else {
+      console.log(`${LOG} --- desktop:dev ---`);
+      await withApp('dev', devProfile, 'dev', (page) => checkDev(page, fixture.url));
+      console.log(`${LOG} --- desktop:dev tras reiniciar ---`);
+      await withApp('dev', devProfile, 'dev-restart', (page) => checkDevAfterRestart(page, fixture.url));
+    }
 
     assert.equal(stepsRun, TOTAL_STEPS, `pasos ejecutados: ${stepsRun}/${TOTAL_STEPS}`);
   } finally {
