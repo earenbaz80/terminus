@@ -2,7 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { E2E_SUITES, selectSuites, suiteSteps } from '../e2e-suites.mjs';
+import {
+  E2E_SUITES,
+  NETWORK_SKIP_DEV_ENV,
+  NETWORK_STEPS,
+  NETWORK_STEPS_WITHOUT_DEV,
+  networkSkipsDev,
+  networkSteps,
+  selectSuites,
+  suiteSteps,
+} from '../e2e-suites.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const { scripts } = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
@@ -25,6 +34,18 @@ describe('suites del E2E instalado', () => {
   it('rechaza una suite desconocida', () => {
     expect(() => selectSuites(['ui-fr'])).toThrow(/Suite desconocida: ui-fr/);
     expect(() => suiteSteps('ui-fr')).toThrow(/Suite desconocida/);
+  });
+
+  it('omite desktop:dev solo con la variable en 1, y ajusta el recuento', () => {
+    expect(networkSkipsDev({})).toBe(false);
+    expect(networkSkipsDev({ [NETWORK_SKIP_DEV_ENV]: '0' })).toBe(false);
+    expect(networkSkipsDev({ [NETWORK_SKIP_DEV_ENV]: 'true' })).toBe(false);
+    expect(networkSkipsDev({ [NETWORK_SKIP_DEV_ENV]: '1' })).toBe(true);
+
+    expect(networkSteps({})).toBe(NETWORK_STEPS);
+    expect(networkSteps({ [NETWORK_SKIP_DEV_ENV]: '1' })).toBe(NETWORK_STEPS_WITHOUT_DEV);
+    // El total que declara la lista y el que lee el guion salen del mismo sitio.
+    expect(suiteSteps('network')).toBe(networkSteps());
   });
 
   // Renombrar una suite o su script de npm dejaría al ejecutor llamando a un
