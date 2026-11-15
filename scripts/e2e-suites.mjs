@@ -9,7 +9,22 @@
  * El CI no elige suites por evento: cuando pide el E2E instalado corre todas, así
  * que la lista no se duplica en el workflow. La de alemán no se restringe porque
  * cuesta lo mismo que `ui` (12 s cada una sobre la app instalada, 14 s `ctrl-f`).
+ *
+ * `network` tiene dos tramos: la app empaquetada (5 pasos) y `desktop:dev` (6).
+ * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` deja solo el primero para aislar un runner
+ * donde el tramo de desarrollo es inestable, y entonces el total baja a 5: el
+ * recuento se calcula aquí para que el guion y este módulo nunca discrepen.
  */
+
+export const NETWORK_SKIP_DEV_ENV = 'TERMINUS_E2E_NETWORK_SKIP_DEV';
+export const NETWORK_STEPS = 11;
+export const NETWORK_STEPS_WITHOUT_DEV = 5;
+
+export const networkSkipsDev = (env = process.env) => env[NETWORK_SKIP_DEV_ENV] === '1';
+
+/** Pasos que declara `network` en este entorno: 11, o 5 si se omite `desktop:dev`. */
+export const networkSteps = (env = process.env) =>
+  networkSkipsDev(env) ? NETWORK_STEPS_WITHOUT_DEV : NETWORK_STEPS;
 
 export const E2E_SUITES = [
   {
@@ -39,7 +54,7 @@ export const E2E_SUITES = [
     script: 'test:e2e:network',
     log: 'e2e-network-policy.log',
     locale: '',
-    steps: 11,
+    steps: networkSteps(),
   },
 ];
 
