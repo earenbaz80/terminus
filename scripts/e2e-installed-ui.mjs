@@ -179,6 +179,39 @@ async function runCommand(client, command) {
   await pressEnter(client);
 }
 
+// Consulta de la carrera de pestañas: tiene que devolver página de resultados, pero
+// el paso no exige un número de resultados, solo que el payload caiga donde toca.
+const IN_FLIGHT_QUERY = 'javascript';
+
+/**
+ * Estado de la página de resultados visible: consulta del campo, dirección y si la
+ * sección que envuelve al formulario sigue ocupada. En el inicio esa sección no
+ * existe, así que `busy` sale nulo.
+ */
+const RESULTS_STATE_EXPRESSION = `(() => {
+  const form = document.querySelector(${JSON.stringify(START_FORM)});
+  const input = form?.querySelector('input[type="search"]') ?? null;
+  const busy = form?.closest('section[aria-busy]')?.getAttribute('aria-busy') ?? null;
+  return {
+    onStart: Boolean(document.querySelector(${JSON.stringify(START_INPUT)})),
+    query: input?.value ?? null,
+    busy,
+    address: document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)})?.value ?? null,
+  };
+})()`;
+
+/** Pulsa la pestaña `index` (desde 1) en la tira, sin pasar por la barra de direcciones. */
+async function clickTab(client, index) {
+  const clicked = await client.evaluate(`(() => {
+    const strip = [...document.querySelectorAll('[role="tab"]')];
+    const tab = strip[${index} - 1];
+    if (!tab) return false;
+    tab.click();
+    return true;
+  })()`);
+  assert.equal(clicked, true, `No se pudo pulsar la pestaña ${index}.`);
+}
+
 /**
  * Espera la página de resultados de `query`, ya asentada.
  *
@@ -191,23 +224,11 @@ async function runCommand(client, command) {
 async function waitForSearchResults(client, query, label) {
   return waitForExpression(
     client,
-    `(() => {
-      const form = document.querySelector(${JSON.stringify(START_FORM)});
-      const input = form?.querySelector('input[type="search"]') ?? null;
-      // La sección que contiene el formulario es la de resultados; en el inicio el
-      // formulario vive en una sección sin aria-busy, así que no puede colarse.
-      const results = form?.closest('section[aria-busy]') ?? null;
-      return {
-        onStart: Boolean(document.querySelector(${JSON.stringify(START_INPUT)})),
-        query: input?.value ?? null,
-        address: document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)})?.value ?? null,
-        settled: results?.getAttribute('aria-busy') === 'false',
-      };
-    })()`,
+    RESULTS_STATE_EXPRESSION,
     (state) =>
       !state.onStart &&
       state.query === query &&
-      state.settled &&
+      state.busy === 'false' &&
       /\bterminus:\/\/search\b/.test(state.address ?? ''),
     label,
     25000,
@@ -999,6 +1020,115 @@ async function main() {
 
   pass(
     `tras recargar, las 2 pestañas vuelven con su URL e historial (${restoredTabs.tabs[0].history.length} y ${restoredTabs.tabs[1].history.length} entradas) y la primera sigue activa.`,
+  );
+
+  // 12. Búsqueda en vuelo y cambio de pestaña: el payload cae solo en la pestaña que
+  //     la lanzó y ninguna se queda cargando. Antes la respuesta se aplicaba a la
+  //     pestaña activa al resolver, así que cambiarse de pestaña la perdía. La
+  //     respuesta se retrasa con la red emulada para que la carrera no dependa de lo
+  //     que tarde el proveedor: la petición sigue en vuelo al cambiar de pestaña.
+  await cdp.send('Network.enable');
+  const throttle = (latency) =>
+    cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency,
+      downloadThroughput: -1,
+      uploadThroughput: -1,
+    });
+  await throttle(2000);
+
+  let race = null;
+  try {
+    for (let attempt = 1; attempt <= 3 && !race; attempt += 1) {
+      // Siempre desde el mismo sitio: la primera pestaña en el inicio.
+      await clickTab(cdp, 1);
+      await runCommand(cdp, 'home');
+      await waitForExpression(
+        cdp,
+        RESULTS_STATE_EXPRESSION,
+        (state) => state.onStart,
+        'el inicio de la primera pestaña antes de la carrera',
+        15000,
+      );
+
+      const query = attempt === 1 ? IN_FLIGHT_QUERY : `${IN_FLIGHT_QUERY} ${attempt}`;
+      // La consulta se escribe y se envía en el formulario del inicio: después de
+      // `home` la barra y el campo del inicio se pelean el foco, y un Enter acabaría
+      // en el sitio equivocado. El clic en el botón no depende del foco.
+      const typed = await typeStartQuery(cdp, query);
+      assert.equal(typed, true, 'No se pudo escribir la consulta de la carrera en el inicio.');
+      await waitForExpression(
+        cdp,
+        `(() => {
+          const form = document.querySelector(${JSON.stringify(START_FORM)});
+          const input = form?.querySelector(${JSON.stringify(START_INPUT)});
+          const submit = form?.querySelector('button[type="submit"]');
+          return { value: input?.value ?? null, enabled: Boolean(submit) && !submit.disabled };
+        })()`,
+        (state) => state.value === query && state.enabled,
+        'la consulta de la carrera aplicada en el inicio',
+        5000,
+      );
+      const submitted = await cdp.evaluate(`(() => {
+        const form = document.querySelector(${JSON.stringify(START_FORM)});
+        const submit = form?.querySelector('button[type="submit"]');
+        if (!submit || submit.disabled) return false;
+        submit.click();
+        return true;
+      })()`);
+      assert.equal(
+        submitted,
+        true,
+        'No se pudo enviar la consulta de la carrera desde el inicio.',
+      );
+
+      // La página de resultados se pinta al momento (solo cambia el estado local), con
+      // la petición todavía en vuelo; el cambio va por la tira de pestañas, no por la
+      // barra, que llegaría tarde.
+      const inFlight = await waitForExpression(
+        cdp,
+        RESULTS_STATE_EXPRESSION,
+        (state) => !state.onStart && state.query === query,
+        'la página de resultados antes de cambiar de pestaña',
+        5000,
+      );
+      await clickTab(cdp, 2);
+      if (inFlight.busy !== 'true') continue;
+
+      // La segunda pestaña queda activa mientras la primera responde. Si la respuesta
+      // se aplicara a la pestaña activa, aquí aparecería la consulta nueva.
+      await sleep(4000);
+      const otherTab = await waitForExpression(
+        cdp,
+        RESULTS_STATE_EXPRESSION,
+        (state) => state.query === SECOND_QUERY && state.busy === 'false',
+        'la segunda pestaña intacta mientras la primera responde',
+        10000,
+      );
+      assert.notEqual(
+        otherTab.query,
+        query,
+        'La respuesta de la búsqueda se aplicó a la pestaña activa en vez de a la que la lanzó.',
+      );
+
+      await clickTab(cdp, 1);
+      const origin = await waitForExpression(
+        cdp,
+        RESULTS_STATE_EXPRESSION,
+        (state) => state.query === query && state.busy === 'false',
+        'la búsqueda resuelta en la pestaña que la lanzó',
+        25000,
+      );
+      assert.equal(origin.busy, 'false', 'La pestaña que lanzó la búsqueda se quedó cargando.');
+      race = { query, otherTab, origin, attempt };
+    }
+  } finally {
+    await throttle(0).catch(() => undefined);
+  }
+
+  assert.ok(race, 'No se pudo pillar una búsqueda en vuelo al cambiar de pestaña en 3 intentos.');
+  pass(
+    `búsqueda «${race.query}» en vuelo (intento ${race.attempt}, red emulada) y salto a la pestaña 2: la 2 sigue en «${race.otherTab.query}» y la 1 resuelve la suya, sin quedarse cargando.`,
   );
 
   // El override de respaldo deja la ventana con su tamaño real, pero sigue siendo

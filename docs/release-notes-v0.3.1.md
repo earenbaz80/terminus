@@ -14,6 +14,7 @@ No cambian lo que ves en la aplicación; son para que las suites digan la verdad
 - **Espera asentada.** La espera de resultados aceptaba la página con la petición todavía en vuelo, así que el paso de las chips recientes lanzaba una segunda búsqueda encima de la primera. Ahora exige el indicador de «cargando» apagado en la sección de resultados.
 - **Log de las suites fallidas.** El reportero reescribía el log de cada suite en cada corrida, de modo que el diagnóstico de un fallo intermitente se perdía en la siguiente. Ahora el log de una suite que falla se copia a `failure-<suite>-<fecha>.log` y su ruta sale en consola; una corrida en verde no deja copias.
 - **Sonda de foco y selección.** Las esperas que fallan registran ahora si el documento tiene el foco, el valor y la selección de la barra de direcciones y si la lista de sugerencias está desplegada.
+- **Búsqueda con cambio de pestaña.** El paso 12 lanza una búsqueda, cambia de pestaña con la petición en vuelo y exige que el resultado caiga solo en la pestaña que la lanzó y que ninguna se quede cargando.
 - **Traza del buscador.** El campo del buscador de Ctrl+F queda trazado después de escribir y en cada evento posterior, con valor, selección, foco, `isTrusted` y hora, más un muestreo periódico y un registro de pulsaciones a nivel de documento; si el texto deja de coincidir, la traza se imprime en el log.
 
 ## Verificación
@@ -21,7 +22,7 @@ No cambian lo que ves en la aplicación; son para que las suites digan la verdad
 - `npm run lint`: correcto (tsc y eslint).
 - `npm test`: **49 archivos, 274 pruebas**, todas pasan.
 - `npm run desktop:build` e instalación `/S`: el `app.asar` instalado es idéntico al de `release/win-unpacked` antes de correr cualquier suite.
-- Cuatro suites sobre la app instalada: `ctrl-f 5/5 · ui 11/11 · ui-de 11/11 · network 16/16`, entre 44 y 46 s en total.
+- Cuatro suites sobre la app instalada: `ctrl-f 5/5 · ui 12/12 · ui-de 12/12 · network 16/16`, unos 56 s en total (el paso de la carrera espera 4 s a que responda la otra pestaña).
 - Diez cadenas completas con el reportero: 10 de 10 en verde.
 - Dos pestañas: los dos escenarios descritos arriba, con 10 resultados en la pestaña correcta en ambos casos.
 
