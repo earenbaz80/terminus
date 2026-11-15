@@ -33,6 +33,16 @@ export const E2E_SUITES = [
     locale: 'de',
     steps: 11,
   },
+  // Comprueba el interruptor de red con la app empaquetada y con `desktop:dev`,
+  // que arranca el servidor como hijo: no confía en el instalador, sino en el
+  // build de `release/win-unpacked` y en el árbol de trabajo.
+  {
+    label: 'network',
+    script: 'test:e2e:network',
+    log: 'e2e-network-policy.log',
+    locale: '',
+    steps: 11,
+  },
 ];
 
 /** Devuelve las suites pedidas por etiqueta; sin etiquetas, todas. */
