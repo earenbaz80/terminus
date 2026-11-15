@@ -69,10 +69,6 @@ const START_CHIPS_LABEL = '[data-e2e="start-chips-label"]';
 const START_SIGN = 'pre.ascii-sign-start';
 // Por debajo del corte `sm` (640 px) y cerca de un móvil real.
 const NARROW_WIDTH = 432;
-// El otro lado del mismo corte: por encima, la etiqueta del grupo vuelve a verse.
-const WIDE_MIN_WIDTH = 640;
-// Ancho de escritorio con el que se sale de la ventana estrecha si limpiar no basta.
-const WIDE_WIDTH = 1280;
 const NARROW_QUERY = 'terminus e2e estrecho';
 const THEMES = {
   msdos: { id: 'ms-dos', bg: '#000080', rgb: 'rgb(0, 0, 128)' },
@@ -307,6 +303,51 @@ async function applyE2ELocale(client) {
   console.log(
     `${LOG} Idioma de la app: ${e2eLocale} (html lang=${applied.lang}, barra: «${applied.address}»).`,
   );
+}
+
+/**
+ * Devuelve el layout ancho después de la ventana estrecha del paso 6.
+ *
+ * `clearDeviceMetricsOverride` no siempre surte efecto: con la interfaz en alemán
+ * el viewport se queda en 433 px y el paso 7 no ve las chips recortadas. Si el
+ * layout no vuelve, se fija el tamaño real que tenía la ventana antes de
+ * encogerla, así que el estado queda igual que sin emulación y los pasos
+ * siguientes no corren en un viewport inventado.
+ *
+ * El repintado no es inmediato aunque el ancho sea el correcto, y lo que se
+ * exige no es solo el ancho: la etiqueta del grupo y las dos recientes tienen que
+ * verse, que es lo que necesita el paso 7 para pulsar la chip correcta.
+ */
+async function restoreWideLayout(client, wide) {
+  const expression = `(() => {
+    const label = document.querySelector(${JSON.stringify(START_CHIPS_LABEL)});
+    const recents = [...document.querySelectorAll(${JSON.stringify(RECENT_CHIP)})];
+    return {
+      width: window.innerWidth,
+      labelVisible: Boolean(label) && label.getClientRects().length > 0,
+      visibleRecents: recents
+        .filter((chip) => chip.getClientRects().length > 0)
+        .map((chip) => (chip.textContent ?? '').trim()),
+    };
+  })()`;
+  const restored = (state) =>
+    state.width === wide.width &&
+    state.labelVisible &&
+    state.visibleRecents.includes(SEARCH_QUERY) &&
+    state.visibleRecents.includes(NARROW_QUERY);
+  const label = `el layout ancho de vuelta (${wide.width} px, etiqueta del grupo y las dos recientes visibles)`;
+
+  try {
+    return await waitForExpression(client, expression, restored, label, 3000);
+  } catch {
+    // Se deja dicho: si este aviso sale en todas las corridas, limpiar la emulación
+    // no está funcionando y el que sostiene el layout es este override.
+    console.log(
+      `${LOG} Limpiar la emulación no devolvió la ventana; se fija su tamaño real (${wide.width}×${wide.height}).`,
+    );
+    await client.send('Emulation.setDeviceMetricsOverride', wide);
+    return waitForExpression(client, expression, restored, label, 7000);
+  }
 }
 
 async function main() {
@@ -555,6 +596,14 @@ async function main() {
     20000,
   );
 
+  // Tamaño real de la ventana antes de encogerla: es el que se restaura después.
+  const wide = await cdp.evaluate(`(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+    deviceScaleFactor: window.devicePixelRatio,
+    mobile: false,
+  }))()`);
+
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width: NARROW_WIDTH,
     height: 900,
@@ -608,41 +657,7 @@ async function main() {
   assert.equal(hiddenRecent?.text, SEARCH_QUERY, 'La reciente oculta no es la anterior.');
 
   await cdp.send('Emulation.clearDeviceMetricsOverride');
-  // Limpiar la emulación no siempre devuelve el viewport: con la interfaz en
-  // alemán se queda en 433 px y el paso 7 no ve las chips recientes. Si el ancho
-  // real no vuelve, se fija uno de escritorio explícito.
-  if ((await cdp.evaluate('window.innerWidth')) <= WIDE_MIN_WIDTH) {
-    await cdp.send('Emulation.setDeviceMetricsOverride', {
-      width: WIDE_WIDTH,
-      height: 900,
-      deviceScaleFactor: 1,
-      mobile: false,
-    });
-  }
-
-  // Y aun así hay que esperar al repintado: el paso 7 busca chips visibles.: el paso 7 busca chips visibles y,
-  // sin esperar, las recientes seguían con el recorte de la ventana estrecha.
-  await waitForExpression(
-    cdp,
-    `(() => {
-      const label = document.querySelector(${JSON.stringify(START_CHIPS_LABEL)});
-      const recents = [...document.querySelectorAll(${JSON.stringify(RECENT_CHIP)})];
-      return {
-        width: window.innerWidth,
-        labelVisible: Boolean(label) && label.getClientRects().length > 0,
-        visibleRecents: recents
-          .filter((chip) => chip.getClientRects().length > 0)
-          .map((chip) => (chip.textContent ?? '').trim()),
-      };
-    })()`,
-    (state) =>
-      state.width > WIDE_MIN_WIDTH &&
-      state.labelVisible &&
-      state.visibleRecents.includes(SEARCH_QUERY) &&
-      state.visibleRecents.includes(NARROW_QUERY),
-    `el layout ancho de vuelta tras ${NARROW_WIDTH} px (etiqueta del grupo y las dos recientes visibles)`,
-    20000,
-  );
+  await restoreWideLayout(cdp, wide);
 
   pass(
     `ventana de ${NARROW_WIDTH} px: cartel entero (${narrow.fontSize.toFixed(2)} px, sin desbordar su caja) y solo la reciente más nueva («${NARROW_QUERY}») visible, con la etiqueta del grupo oculta.`,
@@ -933,6 +948,10 @@ async function main() {
   pass(
     `tras recargar, las 2 pestañas vuelven con su URL e historial (${restoredTabs.tabs[0].history.length} y ${restoredTabs.tabs[1].history.length} entradas) y la primera sigue activa.`,
   );
+
+  // El override de respaldo deja la ventana con su tamaño real, pero sigue siendo
+  // una emulación: se intenta quitar al final para no cerrar con ella puesta.
+  await cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined);
 
   assert.equal(
     stepsRun,
