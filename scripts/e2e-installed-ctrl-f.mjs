@@ -75,6 +75,20 @@ const FIND_BAR_EXPRESSION = `(() => {
   };
 })()`;
 
+// Lo mismo que la expresión anterior, más el estado del foco del documento: sin él
+// no se distingue «la ventana no está en primer plano» de «el iframe se quedó el foco».
+const FIND_FOCUS_EXPRESSION = `(() => {
+  const bar = ${FIND_BAR_EXPRESSION};
+  return {
+    ...bar,
+    documentFocused: document.hasFocus(),
+    activeElement: (document.activeElement?.tagName ?? '') +
+      (document.activeElement?.getAttribute('aria-label')
+        ? '[' + document.activeElement.getAttribute('aria-label') + ']'
+        : ''),
+  };
+})()`;
+
 /** Anota un paso superado, lo numera sobre el total y registra lo que tardó. */
 function pass(message) {
   stepsRun += 1;
@@ -251,12 +265,42 @@ async function openFindBar(client) {
   })()`);
   assert.equal(opened, true, `No se encontró el conmutador del buscador (${FIND_TOGGLE}).`);
 
-  return waitForExpression(
-    client,
-    FIND_BAR_EXPRESSION,
-    (state) => state.open && state.focused,
-    'el buscador abierto con su campo enfocado',
-    5000,
+  // Abrir el buscador no siempre deja el foco en su campo: el iframe proxied se lo
+  // queda si acaba de cargar y, si la ventana no está en primer plano, el campo no
+  // lo recibe. Antes de darlo por fallido se devuelve el primer plano a la ventana
+  // y, si aun así no vuelve, se enfoca el campo para poder seguir con la búsqueda.
+  // El contrato de foco del atajo se comprueba en el paso 1, no aquí.
+  const deadline = Date.now() + 10000;
+  let state = null;
+  let foregroundAttempts = 0;
+  let focusedByTest = false;
+
+  while (Date.now() < deadline) {
+    state = await client.evaluate(FIND_FOCUS_EXPRESSION);
+    if (state.open && state.focused) return state;
+
+    if (state.open && !state.documentFocused && foregroundAttempts < 2) {
+      foregroundAttempts += 1;
+      if (!bringToForeground(app?.pid)) {
+        console.log(`${LOG} La ventana no quedó en primer plano (intento ${foregroundAttempts}).`);
+      }
+    } else if (state.open && !focusedByTest && Date.now() > deadline - 6000) {
+      focusedByTest = true;
+      console.log(
+        `${LOG} El campo del buscador no recuperó el foco (activo: ${state.activeElement}); se enfoca desde la prueba.`,
+      );
+      await client.evaluate(`(() => {
+        const dialog = ${FIND_DIALOG_EXPRESSION};
+        dialog?.querySelector('${FIND_INPUT_SELECTOR}')?.focus();
+        return true;
+      })()`);
+    }
+
+    await sleep(250);
+  }
+
+  throw new Error(
+    `Timeout esperando el buscador abierto con su campo enfocado. Último estado: ${JSON.stringify(state)}`,
   );
 }
 
@@ -451,6 +495,38 @@ function sendNativeCtrlF(pid) {
   }
 }
 
+/** Deja la ventana en primer plano si puede; no lanza, devuelve si lo consiguió. */
+function bringToForeground(pid) {
+  if (!pid) return false;
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    'Add-Type @"',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public class TerminusForegroundState {',
+    '  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
+    '}',
+    '"@',
+    `$process = Get-Process -Id ${pid}`,
+    'for ($i = 0; $i -lt 20 -and $process.MainWindowHandle -eq 0; $i++) { Start-Sleep -Milliseconds 250; $process.Refresh() }',
+    '$shell = New-Object -ComObject WScript.Shell',
+    '[void]$shell.AppActivate($process.Id)',
+    'Start-Sleep -Milliseconds 300',
+    'Write-Output ([TerminusForegroundState]::GetForegroundWindow() -eq $process.MainWindowHandle)',
+  ].join('\r\n');
+
+  try {
+    const output = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { encoding: 'utf8', timeout: 8000, windowsHide: true },
+    );
+    return /true/i.test(output);
+  } catch {
+    return false;
+  }
+}
+
 /** Espera corta a que el buscador esté abierto; devuelve si lo consiguió. */
 async function waitFindOpen(client, timeoutMs) {
   try {
@@ -552,6 +628,7 @@ async function main() {
     },
   });
   const cdp = app.client;
+
 
   // La barra de direcciones tiene que estar visible antes de escribir en ella.
   await waitForExpression(
