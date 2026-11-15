@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { E2E_SUITES, selectSuites, suiteSteps } from '../e2e-suites.mjs';
+import { E2E_SUITES, NETWORK_SKIP_DEV_ENV, selectSuites, suiteSteps } from '../e2e-suites.mjs';
 import { summarizeSuites } from './e2e-report.mjs';
 
 const suites = [
@@ -71,6 +71,30 @@ describe('summarizeSuites', () => {
 
     expect(summary.code).toBe(0);
     expect(summary.text).toBe('ctrl-f 3/3 · ui 6/6');
+  });
+
+  it('acepta los 5 pasos de network solo con el tramo de dev omitido', () => {
+    const network = [E2E_SUITES.find((suite) => suite.label === 'network')];
+    const logs = readFrom({ 'e2e-network-policy.log': 'STEPS: 5/5\r\n' });
+
+    process.env[NETWORK_SKIP_DEV_ENV] = '1';
+    try {
+      expect(summarizeSuites(network, logs)).toEqual({
+        code: 0,
+        result: 'PASS',
+        text: 'network 5/5',
+        problems: [],
+      });
+    } finally {
+      delete process.env[NETWORK_SKIP_DEV_ENV];
+    }
+
+    // Sin la variable, 5/5 está incompleto aunque el guion saliera con 0.
+    const incomplete = summarizeSuites(network, logs);
+    expect(incomplete.code).toBe(1);
+    expect(incomplete.problems[0].message).toBe(
+      'e2e-network-policy.log declara 5/5 pasos; se esperaban 11/11.',
+    );
   });
 
   it('acepta un total mayor que el esperado como fallo', () => {

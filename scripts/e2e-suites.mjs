@@ -12,19 +12,20 @@
  *
  * `network` tiene dos tramos: la app empaquetada (5 pasos) y `desktop:dev` (6).
  * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` deja solo el primero para aislar un runner
- * donde el tramo de desarrollo es inestable, y entonces el total baja a 5: el
- * recuento se calcula aquí para que el guion y este módulo nunca discrepen.
+ * donde el tramo de desarrollo es inestable. La lista no cambia con el entorno:
+ * siempre declara 11; lo que cambia es lo que esa corrida espera, y eso lo dice
+ * `expectedSteps()`, que leen tanto el guion como el recuento de `e2e-report`.
  */
 
 export const NETWORK_SKIP_DEV_ENV = 'TERMINUS_E2E_NETWORK_SKIP_DEV';
-export const NETWORK_STEPS = 11;
-export const NETWORK_STEPS_WITHOUT_DEV = 5;
+/** Los pasos 6-11 de `network` son el tramo de `desktop:dev`. */
+const NETWORK_DEV_STEPS = 6;
 
 export const networkSkipsDev = (env = process.env) => env[NETWORK_SKIP_DEV_ENV] === '1';
 
-/** Pasos que declara `network` en este entorno: 11, o 5 si se omite `desktop:dev`. */
-export const networkSteps = (env = process.env) =>
-  networkSkipsDev(env) ? NETWORK_STEPS_WITHOUT_DEV : NETWORK_STEPS;
+/** Pasos que esta corrida espera de la suite; sin variable, lo que declara la lista. */
+export const expectedSteps = (suite, env = process.env) =>
+  suite.label === 'network' && networkSkipsDev(env) ? suite.steps - NETWORK_DEV_STEPS : suite.steps;
 
 export const E2E_SUITES = [
   {
@@ -54,7 +55,7 @@ export const E2E_SUITES = [
     script: 'test:e2e:network',
     log: 'e2e-network-policy.log',
     locale: '',
-    steps: networkSteps(),
+    steps: 11,
   },
 ];
 
@@ -74,9 +75,9 @@ export function selectSuites(labels = []) {
   return E2E_SUITES.filter((suite) => set.has(suite.label));
 }
 
-/** Total de pasos que declara la suite con esa etiqueta. */
-export function suiteSteps(label) {
+/** Total de pasos que esta corrida espera de la suite con esa etiqueta. */
+export function suiteSteps(label, env = process.env) {
   const suite = E2E_SUITES.find((item) => item.label === label);
   if (!suite) throw new Error(`Suite desconocida: ${label}.`);
-  return suite.steps;
+  return expectedSteps(suite, env);
 }

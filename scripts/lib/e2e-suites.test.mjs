@@ -5,10 +5,8 @@ import { describe, expect, it } from 'vitest';
 import {
   E2E_SUITES,
   NETWORK_SKIP_DEV_ENV,
-  NETWORK_STEPS,
-  NETWORK_STEPS_WITHOUT_DEV,
+  expectedSteps,
   networkSkipsDev,
-  networkSteps,
   selectSuites,
   suiteSteps,
 } from '../e2e-suites.mjs';
@@ -36,16 +34,22 @@ describe('suites del E2E instalado', () => {
     expect(() => suiteSteps('ui-fr')).toThrow(/Suite desconocida/);
   });
 
-  it('omite desktop:dev solo con la variable en 1, y ajusta el recuento', () => {
+  it('omite desktop:dev solo con la variable en 1, y ajusta lo esperado sin tocar la lista', () => {
+    const network = E2E_SUITES.find((suite) => suite.label === 'network');
+    const ctrlF = E2E_SUITES.find((suite) => suite.label === 'ctrl-f');
+    const skipping = { [NETWORK_SKIP_DEV_ENV]: '1' };
+
+    // La lista declara siempre los 11 pasos: el entorno no la reescribe.
+    expect(network.steps).toBe(11);
     expect(networkSkipsDev({})).toBe(false);
     expect(networkSkipsDev({ [NETWORK_SKIP_DEV_ENV]: '0' })).toBe(false);
-    expect(networkSkipsDev({ [NETWORK_SKIP_DEV_ENV]: 'true' })).toBe(false);
-    expect(networkSkipsDev({ [NETWORK_SKIP_DEV_ENV]: '1' })).toBe(true);
+    expect(networkSkipsDev(skipping)).toBe(true);
 
-    expect(networkSteps({})).toBe(NETWORK_STEPS);
-    expect(networkSteps({ [NETWORK_SKIP_DEV_ENV]: '1' })).toBe(NETWORK_STEPS_WITHOUT_DEV);
-    // El total que declara la lista y el que lee el guion salen del mismo sitio.
-    expect(suiteSteps('network')).toBe(networkSteps());
+    expect(expectedSteps(network, {})).toBe(11);
+    expect(expectedSteps(network, skipping)).toBe(5);
+    expect(suiteSteps('network', skipping)).toBe(5);
+    // Otras suites no cambian con la variable.
+    expect(expectedSteps(ctrlF, skipping)).toBe(ctrlF.steps);
   });
 
   // Renombrar una suite o su script de npm dejaría al ejecutor llamando a un
