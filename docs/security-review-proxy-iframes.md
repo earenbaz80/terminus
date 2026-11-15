@@ -15,7 +15,7 @@ El diseño tiene una separación razonable entre el **modo proxy** y el **modo R
 
 - Las páginas proxificadas se sirven desde un origen opaco, sin `allow-same-origin`, con CSP de nonce, sin scripts originales, sin formularios, sin iframes hijos y sin `connect-src`.
 - La vista retro usa una allowlist de etiquetas y reconstruye enlaces e imágenes; la vista texto escapa el contenido.
-- La validación de red bloquea metadata cloud, valida cada redirección y ahora bloquea redes privadas por defecto.
+- La validación de red bloquea metadata cloud, valida cada redirección y ahora bloquea redes privadas por defecto. Un destino privado rechazado sale de `/api/view` como **502**, no como 403 (ver «Controles que funcionan bien»).
 - El iframe del intérprete Python valida `event.source` y un identificador de petición.
 
 El riesgo residual más importante **no es XSS en el chrome de Terminus**, sino la capacidad de una página para provocar tráfico hacia la red local. El bypass por DNS rebinding se corrigió fijando la IP validada en la conexión real. El egress del proxy y la vista REAL ya están cubiertos: la CSP proxificada no permite recursos remotos, las imágenes pasan por `/api/image`, y Electron instala un guard de red y un forward proxy local que fija la IP también para REAL. La validación de `postMessage` también se incorporó: solo el `contentWindow` exacto del iframe proxificado puede enviar mensajes de navegación o atajo. F-05 y F-07 también quedaron corregidos: la política de red canonicaliza IPv6 y el proxy usa un sanitizador basado en parser. La inconsistencia de `base-uri` que afectaba a las URLs relativas de las páginas proxificadas también se corrigió y se verificó en la prueba E2E.
@@ -288,6 +288,7 @@ Con la corrección de F-06, la prueba no registra errores de `base-uri`; el enla
 - **Vista retro:** allowlist de etiquetas y reconstrucción de enlaces/imágenes sin atributos originales.
 - **Vista texto:** texto y URL escapados; no se inserta HTML remoto.
 - **Proxy:** bloqueo de metadata, validación por salto de redirección, timeout y límites de 4 MB/50 MB/12 MB.
+- **Estados de `/api/view`:** 400 para un esquema que no sea HTTP/HTTPS, 413 por tamaño declarado, **403 solo para hosts de metadata cloud** y **502 para cualquier otro fallo, incluido el destino privado rechazado por la política de red**. El 502 es el mismo `catch` que un destino inalcanzable, así que un 502 pidiendo una URL privada confirma que la política actuó: no es un fallo del proxy.
 - **Electron:** `sandbox`, `contextIsolation`, `nodeIntegration: false`, bloqueo de `webview`, IPC limitado al frame principal y navegación top-level restringida.
 - **REAL:** forward proxy local que resuelve y fija la IP antes de conectar; HTTP reenviado y HTTPS por túnel `CONNECT` con TLS intacto.
 - **Descargas:** nombre saneado y `Content-Disposition: attachment`.
