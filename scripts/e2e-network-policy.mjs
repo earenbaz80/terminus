@@ -21,9 +21,9 @@
  * instaladas y un build empaquetado al día (`npm run desktop:build`, o
  * `electron-builder --dir` en un directorio aparte con `TERMINUS_BUILD_DIR`).
  *
- * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` omite el tramo de `desktop:dev` (pasos 8-13)
+ * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` omite el tramo de `desktop:dev` (pasos 9-14)
  * y deja solo la app empaquetada, para aislar un runner donde arrancar el
- * servidor en desarrollo es inestable. El total esperado baja a 5 en el mismo
+ * servidor en desarrollo es inestable. El total esperado baja a 8 en el mismo
  * módulo que lee el ejecutor, así que el recuento sigue cuadrando.
  *
  * Códigos de salida: 0 si todo pasa, 1 si hay regresión o falta el build.
@@ -197,7 +197,8 @@ async function enablePackaged(page, fixtureUrl, host) {
 }
 
 /** Pasos 4-5: la decisión guardada se recupera al relanzar y se puede deshacer. */
-async function reusePackaged(page, fixtureUrl) {
+/** Pasos 6-8: la preferencia sobrevive al relanzar y al desactivar vuelve el bloqueo. */
+async function reusePackaged(page, fixtureUrl, host) {
   await openMenu(page);
   const restored = await menuState(page);
   const allowed = await waitForStatus(page, viewUrl(fixtureUrl), ALLOWED_STATUS, 'relanzar empaquetada');
@@ -213,9 +214,15 @@ async function reusePackaged(page, fixtureUrl) {
     off.pressed === false && blockedAgain.status === BLOCKED_STATUS,
     `al desactivar vuelve a INACTIVO y el proxy rechaza (aria-pressed=${off.pressed}, status=${blockedAgain.status})`
   );
+
+  const blockedDns = await waitForStatus(page, dnsUrl(host), 403, 'desactivar empaquetada (dns)');
+  expectStep(
+    dnsPayload(blockedDns.body)?.error === 'DNS target blocked by network policy',
+    `y /api/dns vuelve a rechazar ${host} (status=${blockedDns.status})`
+  );
 }
 
-/** Pasos 6-9: `desktop:dev` guarda la decisión pero el servidor hijo no la recibe. */
+/** Pasos 9-12: `desktop:dev` guarda la decisión pero el servidor hijo no la recibe. */
 async function checkDev(page, fixtureUrl) {
   await openMenu(page);
   const initial = await menuState(page);
@@ -236,7 +243,7 @@ async function checkDev(page, fixtureUrl) {
   expectStep(on.hint === true, 'el menú no finge que el cambio se aplicó');
 }
 
-/** Pasos 10-11: tras reiniciar, el servidor hijo hereda la preferencia guardada. */
+/** Pasos 13-14: tras reiniciar, el servidor hijo hereda la preferencia guardada. */
 async function checkDevAfterRestart(page, fixtureUrl) {
   await openMenu(page);
   const restored = await menuState(page);
@@ -262,11 +269,13 @@ async function main() {
   try {
     console.log(`${LOG} --- app empaquetada: ${packagedExecutable()} ---`);
     await withApp('packaged', packagedProfile, 'packaged', (page) => enablePackaged(page, fixture.url, host));
-    await withApp('packaged', packagedProfile, 'packaged-restart', (page) => reusePackaged(page, fixture.url));
+    await withApp('packaged', packagedProfile, 'packaged-restart', (page) =>
+      reusePackaged(page, fixture.url, host)
+    );
 
     if (SKIP_DEV) {
       // Visible en el log y en el resumen: omitir el tramo no puede pasar inadvertido.
-      console.log(`${LOG} OMITIDO desktop:dev (pasos 8-13): ${NETWORK_SKIP_DEV_ENV}=1`);
+      console.log(`${LOG} OMITIDO desktop:dev (pasos 9-14): ${NETWORK_SKIP_DEV_ENV}=1`);
     } else {
       console.log(`${LOG} --- desktop:dev ---`);
       await withApp('dev', devProfile, 'dev', (page) => checkDev(page, fixture.url));
