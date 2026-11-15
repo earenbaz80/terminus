@@ -476,6 +476,22 @@ async function main() {
   assert.equal(startPage.formButtons, 1, 'El formulario de inicio tiene botones de más: ¿volvió el botón intermedio?');
   assert.equal(startPage.submitButtons, 1, 'El único botón del formulario de inicio no es el de envío.');
 
+  // Si el envío se pierde, la traza del campo dice qué valor tenía en cada evento.
+  await cdp.evaluate(`(() => {
+    window.__e2eSubmitTrace = [];
+    const input = document.querySelector(${JSON.stringify(START_INPUT)});
+    const snap = (kind) => window.__e2eSubmitTrace.push({
+      kind,
+      value: input?.value ?? null,
+      selStart: input?.selectionStart ?? null,
+    });
+    input?.addEventListener('input', () => snap('input'));
+    input?.addEventListener('keydown', (event) => snap('keydown:' + event.key));
+    document.addEventListener('submit', () => snap('submit'), true);
+    snap('start');
+    return true;
+  })()`);
+
   const typed = await cdp.evaluate(`(() => {
     const form = document.querySelector(${JSON.stringify(START_FORM)});
     const input = form?.querySelector(${JSON.stringify(START_INPUT)});
@@ -487,7 +503,21 @@ async function main() {
     return true;
   })()`);
   assert.equal(typed, true, 'No se pudo escribir en el formulario de inicio.');
-  await sleep(200);
+  // El submit lee el estado de React, no el DOM: se espera a que el propio
+  // formulario lo refleje (botón de envío habilitado) antes de pulsar Enter, en
+  // lugar de confiar en un retardo fijo.
+  await waitForExpression(
+    cdp,
+    `(() => {
+      const form = document.querySelector(${JSON.stringify(START_FORM)});
+      const input = form?.querySelector(${JSON.stringify(START_INPUT)});
+      const submit = form?.querySelector('button[type="submit"]');
+      return { value: input?.value ?? null, enabled: Boolean(submit) && !submit.disabled };
+    })()`,
+    (state) => state.value === SEARCH_QUERY && state.enabled,
+    'la consulta del inicio aplicada en el formulario',
+    5000,
+  );
   await pressEnter(cdp);
 
   const searched = await waitForExpression(
@@ -514,7 +544,11 @@ async function main() {
       state.commandLogged,
     'la búsqueda del inicio en un solo paso',
     25000,
-  );
+  ).catch(async (error) => {
+    const trace = await cdp.evaluate('window.__e2eSubmitTrace').catch(() => null);
+    console.log(`${LOG} El campo del inicio tenía estos valores antes del envío: ${JSON.stringify(trace)}`);
+    throw error;
+  });
 
   pass(`búsqueda del inicio en un paso («search ${SEARCH_QUERY}» registrado, resultados en ${searched.address}).`);
   // 5. La búsqueda lanzada arriba queda como chip reciente del inicio.
