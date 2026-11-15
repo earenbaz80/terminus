@@ -183,10 +183,9 @@ async function runCommand(client, command) {
  *
  * Se comprueba por el campo de la página de resultados y por la dirección, no por el
  * texto visible: sirve igual en cualquier idioma. Además exige `aria-busy="false"`
- * en la sección de resultados, que es el indicador que la propia página usa para
- * decir que el payload de la consulta ya está aplicado: con solo la dirección y el
- * texto, el paso se daba por bueno con la petición todavía en vuelo y la siguiente
- * búsqueda se lanzaba encima de ella.
+ * en la sección que envuelve al formulario, que es como la página dice que el payload
+ * de esta consulta ya está aplicado; con solo la dirección y el texto, el paso se daba
+ * por bueno con la petición en vuelo y la siguiente búsqueda se lanzaba encima.
  */
 async function waitForSearchResults(client, query, label) {
   return waitForExpression(
@@ -194,7 +193,9 @@ async function waitForSearchResults(client, query, label) {
     `(() => {
       const form = document.querySelector(${JSON.stringify(START_FORM)});
       const input = form?.querySelector('input[type="search"]') ?? null;
-      const results = document.querySelector('main section[aria-busy]');
+      // La sección que contiene el formulario es la de resultados; en el inicio el
+      // formulario vive en una sección sin aria-busy, así que no puede colarse.
+      const results = form?.closest('section[aria-busy]') ?? null;
       return {
         onStart: Boolean(document.querySelector(${JSON.stringify(START_INPUT)})),
         query: input?.value ?? null,
