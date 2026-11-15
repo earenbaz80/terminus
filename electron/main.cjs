@@ -66,64 +66,52 @@ loadAdblockState();
 // NETWORK_POLICY=public still win, so an explicit environment opt-out fails closed.
 const NETWORK_STATE_FILENAME = 'network-state.json';
 let allowPrivateNetworks = false;
-// True only when the API server runs inside this process (the packaged app).
-// `npm run desktop:dev` spawns `server.ts` as a child, so it inherits the
-// environment once and a runtime change only reaches it after a restart.
+// Who decided the current policy: 'env' when the environment fixed it (the switch
+// cannot revoke it), 'stored' when the settings menu owns it. The API server runs
+// in this process only in the packaged app; `npm run desktop:dev` spawns it as a
+// child that inherits the environment once, so a change there needs a restart.
+let networkPolicySource = 'stored';
 let networkPolicyInProcess = false;
-// Only a variable Terminus wrote may be removed again: a TERMINUS_ALLOW_PRIVATE
-// that came from the user's environment belongs to the user, not to the switch.
-let networkPolicyEnvOwned = false;
 
 const networkStatePath = () => path.join(app.getPath('userData'), NETWORK_STATE_FILENAME);
 
-const envBlocksPrivateNetworks = () =>
-  process.env.TERMINUS_BLOCK_PRIVATE === '1' || process.env.TERMINUS_NETWORK_POLICY === 'public';
-
-const envGrantsPrivateNetworks = () =>
-  process.env.TERMINUS_ALLOW_PRIVATE === '1' ||
-  process.env.TERMINUS_NETWORK_POLICY === 'local' ||
-  process.env.TERMINUS_NETWORK_POLICY === 'private';
-
-// The switch only changes a decision it owns. A grant that comes from the
-// environment cannot be revoked from the UI, so this reports the effective state
-// instead of letting the menu claim a change the process never made.
-function networkPolicyLockedByEnv() {
-  if (envBlocksPrivateNetworks()) return true;
-  return !networkPolicyEnvOwned && envGrantsPrivateNetworks();
+/** Same precedence as `blockPrivateNetworks()` in src/utils/serverSecurity.ts. */
+function envDecidesPolicy() {
+  if (process.env.TERMINUS_BLOCK_PRIVATE === '1' || process.env.TERMINUS_NETWORK_POLICY === 'public') {
+    return 'block';
+  }
+  if (
+    process.env.TERMINUS_ALLOW_PRIVATE === '1' ||
+    process.env.TERMINUS_NETWORK_POLICY === 'local' ||
+    process.env.TERMINUS_NETWORK_POLICY === 'private'
+  ) {
+    return 'allow';
+  }
+  return null;
 }
 
-// The local server reads TERMINUS_ALLOW_PRIVATE on every request, so mirroring the
-// decision there is enough for the proxy and the DNS endpoint of the packaged app.
-function applyNetworkPolicyEnv() {
-  if (envBlocksPrivateNetworks()) return;
-  if (allowPrivateNetworks) {
-    // Already granted, by the environment or by an earlier switch-on: nothing to own.
-    if (process.env.TERMINUS_ALLOW_PRIVATE === '1') return;
-    process.env.TERMINUS_ALLOW_PRIVATE = '1';
-    networkPolicyEnvOwned = true;
-    return;
+function readStoredAllowPrivate() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(networkStatePath(), 'utf8'));
+    return parsed?.allowPrivate === true;
+  } catch {
+    return false; // No stored preference: keep the safe default.
   }
-  if (!networkPolicyEnvOwned) return;
-  delete process.env.TERMINUS_ALLOW_PRIVATE;
-  networkPolicyEnvOwned = false;
+}
+
+// The server bundle reads TERMINUS_ALLOW_PRIVATE on every request, so mirroring the
+// decision here is the only channel this process shares with it. Only a policy the
+// switch owns is written there: an environment decision is never edited.
+function applyNetworkPolicyEnv() {
+  if (networkPolicySource !== 'stored') return;
+  if (allowPrivateNetworks) process.env.TERMINUS_ALLOW_PRIVATE = '1';
+  else delete process.env.TERMINUS_ALLOW_PRIVATE;
 }
 
 function loadNetworkState() {
-  if (envBlocksPrivateNetworks()) {
-    allowPrivateNetworks = false;
-    return;
-  }
-  if (envGrantsPrivateNetworks()) {
-    // The environment decided it: keep the menu on and leave the variable untouched.
-    allowPrivateNetworks = true;
-    return;
-  }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(networkStatePath(), 'utf8'));
-    allowPrivateNetworks = parsed?.allowPrivate === true;
-  } catch {
-    // No stored preference: keep the safe default.
-  }
+  const envPolicy = envDecidesPolicy();
+  networkPolicySource = envPolicy ? 'env' : 'stored';
+  allowPrivateNetworks = envPolicy ? envPolicy === 'allow' : readStoredAllowPrivate();
   applyNetworkPolicyEnv();
 }
 
@@ -138,6 +126,14 @@ async function persistNetworkState() {
     console.warn('[Terminus] No se pudo guardar la política de red.', error);
   }
 }
+
+const DENIED_NETWORK_STATE = { allowPrivate: false, available: false, appliesLive: false };
+
+const networkStateSnapshot = () => ({
+  allowPrivate: allowPrivateNetworks,
+  available: true,
+  appliesLive: networkPolicyInProcess,
+});
 
 loadNetworkState();
 let networkGuardOrigin = null;
@@ -1425,29 +1421,19 @@ function registerWindowIpc() {
     return { enabled: adblockEnabled, available: true };
   });
 
-  ipcMain.handle('terminus:network:state', (event) => {
-    if (!windowForEvent(event)) return { allowPrivate: false, available: false, appliesLive: false };
-    return {
-      allowPrivate: allowPrivateNetworks,
-      available: true,
-      appliesLive: networkPolicyInProcess,
-    };
-  });
+  ipcMain.handle('terminus:network:state', (event) =>
+    windowForEvent(event) ? networkStateSnapshot() : DENIED_NETWORK_STATE
+  );
 
   ipcMain.handle('terminus:network:set-allow-private', async (event, allowPrivate) => {
-    if (!windowForEvent(event)) {
-      return { allowPrivate: allowPrivateNetworks, available: false, appliesLive: false };
-    }
-    if (!networkPolicyLockedByEnv()) {
+    if (!windowForEvent(event)) return DENIED_NETWORK_STATE;
+    // The menu only changes a decision it owns; an environment policy wins.
+    if (networkPolicySource === 'stored') {
       allowPrivateNetworks = Boolean(allowPrivate);
       applyNetworkPolicyEnv();
       await persistNetworkState();
     }
-    return {
-      allowPrivate: allowPrivateNetworks,
-      available: true,
-      appliesLive: networkPolicyInProcess,
-    };
+    return networkStateSnapshot();
   });
 }
 
