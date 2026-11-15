@@ -21,7 +21,7 @@
  * instaladas y un build empaquetado al día (`npm run desktop:build`, o
  * `electron-builder --dir` en un directorio aparte con `TERMINUS_BUILD_DIR`).
  *
- * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` omite el tramo de `desktop:dev` (pasos 9-14)
+ * `TERMINUS_E2E_NETWORK_SKIP_DEV=1` omite el tramo de `desktop:dev` (pasos 9-16)
  * y deja solo la app empaquetada, para aislar un runner donde arrancar el
  * servidor en desarrollo es inestable. El total esperado baja a 8 en el mismo
  * módulo que lee el ejecutor, así que el recuento sigue cuadrando.
@@ -222,8 +222,8 @@ async function reusePackaged(page, fixtureUrl, host) {
   );
 }
 
-/** Pasos 9-12: `desktop:dev` guarda la decisión pero el servidor hijo no la recibe. */
-async function checkDev(page, fixtureUrl) {
+/** Pasos 9-13: `desktop:dev` guarda la decisión pero el servidor hijo no la recibe. */
+async function checkDev(page, fixtureUrl, host) {
   await openMenu(page);
   const initial = await menuState(page);
   const blocked = await waitForStatus(page, viewUrl(fixtureUrl), BLOCKED_STATUS, 'arranque desktop:dev');
@@ -240,17 +240,31 @@ async function checkDev(page, fixtureUrl) {
     on.pressed === true && stillBlocked.status === BLOCKED_STATUS,
     `el menú guarda ACTIVO pero el servidor hijo sigue rechazando (status=${stillBlocked.status})`
   );
+
+  const stillBlockedDns = await waitForStatus(page, dnsUrl(host), 403, 'activar desktop:dev (dns)');
+  expectStep(
+    dnsPayload(stillBlockedDns.body)?.error === 'DNS target blocked by network policy',
+    `y /api/dns sigue rechazando ${host} en el servidor hijo (status=${stillBlockedDns.status})`
+  );
+
   expectStep(on.hint === true, 'el menú no finge que el cambio se aplicó');
 }
 
-/** Pasos 13-14: tras reiniciar, el servidor hijo hereda la preferencia guardada. */
-async function checkDevAfterRestart(page, fixtureUrl) {
+/** Pasos 14-16: tras reiniciar, el servidor hijo hereda la preferencia guardada. */
+async function checkDevAfterRestart(page, fixtureUrl, host) {
   await openMenu(page);
   const restored = await menuState(page);
   const allowed = await waitForStatus(page, viewUrl(fixtureUrl), ALLOWED_STATUS, 'reiniciar desktop:dev');
   expectStep(
     restored.pressed === true && allowed.body.includes('PROBE_OK'),
     `la decisión guardada se aplica al reiniciar (aria-pressed=${restored.pressed}, status=${allowed.status})`
+  );
+
+  const allowedDns = await waitForStatus(page, dnsUrl(host), ALLOWED_STATUS, 'reiniciar desktop:dev (dns)');
+  const records = dnsPayload(allowedDns.body)?.records ?? [];
+  expectStep(
+    records.some((record) => record.address === host),
+    `y /api/dns resuelve ${host} tras reiniciar (status=${allowedDns.status}, ${records.length} registro/s)`
   );
 
   await restored.toggle.click();
@@ -275,12 +289,14 @@ async function main() {
 
     if (SKIP_DEV) {
       // Visible en el log y en el resumen: omitir el tramo no puede pasar inadvertido.
-      console.log(`${LOG} OMITIDO desktop:dev (pasos 9-14): ${NETWORK_SKIP_DEV_ENV}=1`);
+      console.log(`${LOG} OMITIDO desktop:dev (pasos 9-16): ${NETWORK_SKIP_DEV_ENV}=1`);
     } else {
       console.log(`${LOG} --- desktop:dev ---`);
-      await withApp('dev', devProfile, 'dev', (page) => checkDev(page, fixture.url));
+      await withApp('dev', devProfile, 'dev', (page) => checkDev(page, fixture.url, host));
       console.log(`${LOG} --- desktop:dev tras reiniciar ---`);
-      await withApp('dev', devProfile, 'dev-restart', (page) => checkDevAfterRestart(page, fixture.url));
+      await withApp('dev', devProfile, 'dev-restart', (page) =>
+        checkDevAfterRestart(page, fixture.url, host)
+      );
     }
 
     assert.equal(stepsRun, TOTAL_STEPS, `pasos ejecutados: ${stepsRun}/${TOTAL_STEPS}`);

@@ -93,7 +93,7 @@ describe('summarizeSuites', () => {
     const incomplete = summarizeSuites(network, logs);
     expect(incomplete.code).toBe(1);
     expect(incomplete.problems[0].message).toBe(
-      'e2e-network-policy.log declara 8/8 pasos; se esperaban 14/14.',
+      'e2e-network-policy.log declara 8/8 pasos; se esperaban 16/16.',
     );
   });
 
