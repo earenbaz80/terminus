@@ -242,6 +242,8 @@ const es = {
     'El proxy y el DNS del servidor aceptan destinos privados; la vista REAL sigue bloqueándolos. Úsalo solo en una red de confianza.',
   'settings.networkDesktopOnly':
     'Se cambia desde la aplicación de escritorio; en el navegador manda la configuración del servidor.',
+  'settings.networkRestart':
+    'El servidor no corre en este proceso: el cambio se aplica al reiniciar Terminus.',
   'settings.on': 'ACTIVO',
   'settings.off': 'INACTIVO',
   'settings.security': 'Seguridad',
@@ -986,6 +988,8 @@ const de: Record<MessageKey, string> = {
     'Proxy und DNS des Servers erlauben private Ziele; die REAL-Ansicht blockiert sie weiterhin. Nur in einem vertrauenswürdigen Netz verwenden.',
   'settings.networkDesktopOnly':
     'Wird in der Desktop-App geändert; im Browser gilt die Serverkonfiguration.',
+  'settings.networkRestart':
+    'Der Server läuft nicht in diesem Prozess: die Änderung gilt nach einem Neustart von Terminus.',
   'settings.on': 'AKTIV',
   'settings.off': 'INAKTIV',
   'settings.security': 'Sicherheit',
@@ -1728,6 +1732,8 @@ const fr: Record<MessageKey, string> = {
     'Le proxy et le DNS du serveur acceptent les destinations privées ; la vue REAL continue de les bloquer. À réserver à un réseau de confiance.',
   'settings.networkDesktopOnly':
     "Se règle depuis l'application de bureau ; dans le navigateur, la configuration du serveur décide.",
+  'settings.networkRestart':
+    "Le serveur ne tourne pas dans ce processus : le changement s'applique au redémarrage de Terminus.",
   'settings.on': 'ACTIF',
   'settings.off': 'INACTIF',
   'settings.security': 'Sécurité',
@@ -2469,6 +2475,8 @@ const it: Record<MessageKey, string> = {
     'Il proxy e il DNS del server accettano destinazioni private; la vista REAL continua a bloccarle. Usalo solo in una rete fidata.',
   'settings.networkDesktopOnly':
     "Si cambia dall'app desktop; nel browser vale la configurazione del server.",
+  'settings.networkRestart':
+    'Il server non gira in questo processo: la modifica si applica al riavvio di Terminus.',
   'settings.on': 'ATTIVO',
   'settings.off': 'INATTIVO',
   'settings.security': 'Sicurezza',
@@ -3211,6 +3219,8 @@ const en: Record<MessageKey, string> = {
     'The server proxy and DNS accept private destinations; the REAL view still blocks them. Use it only on a trusted network.',
   'settings.networkDesktopOnly':
     'Changed from the desktop app; in a browser tab the server configuration decides.',
+  'settings.networkRestart':
+    'The server does not run in this process: the change applies when Terminus restarts.',
   'settings.on': 'ON',
   'settings.off': 'OFF',
   'settings.security': 'Security',

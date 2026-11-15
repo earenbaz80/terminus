@@ -143,9 +143,11 @@ describe('SettingsMenu comportamiento', () => {
   });
 });
 
+type StubNetworkState = { allowPrivate: boolean; available: boolean; appliesLive: boolean };
+
 const stubDesktopBridge = (network: {
-  getNetworkState: () => Promise<{ allowPrivate: boolean; available: boolean }>;
-  setAllowPrivateNetworks: (allowPrivate: boolean) => Promise<{ allowPrivate: boolean; available: boolean }>;
+  getNetworkState: () => Promise<StubNetworkState>;
+  setAllowPrivateNetworks: (allowPrivate: boolean) => Promise<StubNetworkState>;
 }) => {
   window.terminusDesktop = {
     ...(window.terminusDesktop ?? {}),
@@ -172,10 +174,12 @@ describe('SettingsMenu red y privacidad', () => {
   });
 
   it('alterna la excepción desde el escritorio y refleja lo que devuelve el proceso principal', async () => {
-    const getNetworkState = vi.fn().mockResolvedValue({ allowPrivate: false, available: true });
+    const getNetworkState = vi
+      .fn()
+      .mockResolvedValue({ allowPrivate: false, available: true, appliesLive: true });
     const setAllowPrivateNetworks = vi
       .fn()
-      .mockResolvedValue({ allowPrivate: true, available: true });
+      .mockResolvedValue({ allowPrivate: true, available: true, appliesLive: true });
     stubDesktopBridge({ getNetworkState, setAllowPrivateNetworks });
 
     renderSettings();
@@ -189,16 +193,20 @@ describe('SettingsMenu red y privacidad', () => {
     await waitFor(() => expect(setAllowPrivateNetworks).toHaveBeenCalledWith(true));
     await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'));
     expect(region.textContent).toContain('la vista REAL sigue bloqueándolos');
+    // El servidor corre en este proceso: no hay nada que avisar del reinicio.
+    expect(region.textContent).not.toContain('al reiniciar Terminus');
     expect(localStorage.getItem(NETWORK_PREFERENCE_KEY)).toBe('1');
   });
 
   it('mantiene el control en el estado que manda el proceso principal si el entorno lo bloquea', async () => {
     // El proceso principal devuelve el valor efectivo: si el entorno fuerza el
     // bloqueo, el clic no puede dejar el menú en «permitido».
-    const getNetworkState = vi.fn().mockResolvedValue({ allowPrivate: false, available: true });
+    const getNetworkState = vi
+      .fn()
+      .mockResolvedValue({ allowPrivate: false, available: true, appliesLive: true });
     const setAllowPrivateNetworks = vi
       .fn()
-      .mockResolvedValue({ allowPrivate: false, available: true });
+      .mockResolvedValue({ allowPrivate: false, available: true, appliesLive: true });
     stubDesktopBridge({ getNetworkState, setAllowPrivateNetworks });
 
     renderSettings();
@@ -212,5 +220,25 @@ describe('SettingsMenu red y privacidad', () => {
     await waitFor(() => expect(setAllowPrivateNetworks).toHaveBeenCalledWith(true));
     await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('false'));
     expect(localStorage.getItem(NETWORK_PREFERENCE_KEY)).toBe('0');
+  });
+
+  it('avisa de que el cambio necesita reinicio cuando el servidor vive en otro proceso', async () => {
+    const getNetworkState = vi
+      .fn()
+      .mockResolvedValue({ allowPrivate: true, available: true, appliesLive: false });
+    const setAllowPrivateNetworks = vi
+      .fn()
+      .mockResolvedValue({ allowPrivate: false, available: true, appliesLive: false });
+    stubDesktopBridge({ getNetworkState, setAllowPrivateNetworks });
+
+    renderSettings();
+    const region = networkRegion();
+    const toggle = await within(region).findByRole('button', { name: /Permitir destinos privados/ });
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'));
+
+    // `desktop:dev` arranca el servidor como hijo: el estado se guarda, pero no se
+    // aplica hasta reiniciar, y el menú lo dice en vez de callarlo.
+    expect(region.textContent).toContain('el cambio se aplica al reiniciar Terminus');
+    expect(toggle).toHaveProperty('disabled', false);
   });
 });
