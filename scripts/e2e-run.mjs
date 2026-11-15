@@ -91,6 +91,7 @@ function runSuite(suite) {
 
 fs.mkdirSync(outDir, { recursive: true });
 
+const startedAt = performance.now();
 let runCode = 0;
 if (!reportOnly) {
   for (const suite of suites) {
@@ -98,6 +99,7 @@ if (!reportOnly) {
     if (code !== 0 && runCode === 0) runCode = code;
   }
 }
+const wallSeconds = (performance.now() - startedAt) / 1000;
 
 const summary = summarizeLogs(outDir, suites);
 for (const problem of summary.problems) {
@@ -107,9 +109,10 @@ for (const problem of summary.problems) {
 const exitCode = runCode !== 0 ? runCode : summary.code;
 const result = exitCode === 0 ? 'PASS' : 'FAIL';
 console.log(`[e2e-run] ${result} (código ${exitCode}) — pasos: ${summary.text}`);
+console.log(`[e2e-run] tiempo total: ${wallSeconds.toFixed(2)} s`);
 
 if (process.env.GITHUB_OUTPUT) {
-  const lines = [`result=${result}`, `exit_code=${exitCode}`, `steps=${summary.text}`];
+  const lines = [`result=${result}`, `exit_code=${exitCode}`, `steps=${summary.text}`, `wall_seconds=${wallSeconds.toFixed(2)}`];
   fs.appendFileSync(process.env.GITHUB_OUTPUT, lines.join(os.EOL) + os.EOL);
 }
 
