@@ -239,7 +239,7 @@ const es = {
   'settings.allowPrivate': 'Permitir destinos privados',
   'settings.networkHint': 'El proxy y el DNS rechazan loopback, intranet y direcciones locales.',
   'settings.allowPrivateHint':
-    'Los destinos privados quedan permitidos: úsalo solo en una red de confianza.',
+    'El proxy y el DNS del servidor aceptan destinos privados; la vista REAL sigue bloqueándolos. Úsalo solo en una red de confianza.',
   'settings.networkDesktopOnly':
     'Se cambia desde la aplicación de escritorio; en el navegador manda la configuración del servidor.',
   'settings.on': 'ACTIVO',
@@ -983,7 +983,7 @@ const de: Record<MessageKey, string> = {
   'settings.allowPrivate': 'Private Ziele erlauben',
   'settings.networkHint': 'Proxy und DNS blockieren Loopback, Intranet und lokale Adressen.',
   'settings.allowPrivateHint':
-    'Private Ziele sind erlaubt: nur in einem vertrauenswürdigen Netz verwenden.',
+    'Proxy und DNS des Servers erlauben private Ziele; die REAL-Ansicht blockiert sie weiterhin. Nur in einem vertrauenswürdigen Netz verwenden.',
   'settings.networkDesktopOnly':
     'Wird in der Desktop-App geändert; im Browser gilt die Serverkonfiguration.',
   'settings.on': 'AKTIV',
@@ -1725,7 +1725,7 @@ const fr: Record<MessageKey, string> = {
   'settings.allowPrivate': 'Autoriser les destinations privées',
   'settings.networkHint': 'Le proxy et le DNS refusent loopback, intranet et adresses locales.',
   'settings.allowPrivateHint':
-    'Les destinations privées sont autorisées : à réserver à un réseau de confiance.',
+    'Le proxy et le DNS du serveur acceptent les destinations privées ; la vue REAL continue de les bloquer. À réserver à un réseau de confiance.',
   'settings.networkDesktopOnly':
     "Se règle depuis l'application de bureau ; dans le navigateur, la configuration du serveur décide.",
   'settings.on': 'ACTIF',
@@ -2466,7 +2466,7 @@ const it: Record<MessageKey, string> = {
   'settings.allowPrivate': 'Consenti destinazioni private',
   'settings.networkHint': 'Il proxy e il DNS rifiutano loopback, intranet e indirizzi locali.',
   'settings.allowPrivateHint':
-    'Le destinazioni private sono consentite: usalo solo in una rete fidata.',
+    'Il proxy e il DNS del server accettano destinazioni private; la vista REAL continua a bloccarle. Usalo solo in una rete fidata.',
   'settings.networkDesktopOnly':
     "Si cambia dall'app desktop; nel browser vale la configurazione del server.",
   'settings.on': 'ATTIVO',
@@ -3208,7 +3208,7 @@ const en: Record<MessageKey, string> = {
   'settings.allowPrivate': 'Allow private destinations',
   'settings.networkHint': 'The proxy and DNS refuse loopback, intranet and local addresses.',
   'settings.allowPrivateHint':
-    'Private destinations are allowed: use it only on a trusted network.',
+    'The server proxy and DNS accept private destinations; the REAL view still blocks them. Use it only on a trusted network.',
   'settings.networkDesktopOnly':
     'Changed from the desktop app; in a browser tab the server configuration decides.',
   'settings.on': 'ON',
