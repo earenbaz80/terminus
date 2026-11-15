@@ -307,17 +307,6 @@ async function openFindBar(client) {
   );
 }
 
-// Último valor leído del campo del buscador antes y después de escribirlo, para
-// poder compararlo si el buscador reporta un texto distinto al enviado.
-let findQuerySnapshots = null;
-
-const FIND_INPUT_SNAPSHOT = `(() => {
-  const input = ${FIND_DIALOG_EXPRESSION}?.querySelector('${FIND_INPUT_SELECTOR}');
-  return input
-    ? { value: input.value, selStart: input.selectionStart, focused: document.activeElement === input }
-    : null;
-})()`;
-
 /**
  * Traza del campo del buscador: el valor tras escribirlo y en cada evento y cambio
  * posterior, con la hora, para saber quién lo muta cuando pierde o gana un carácter.
@@ -341,12 +330,14 @@ const FIND_TRACE_EXPRESSION = `(() => {
       hasFocus: document.hasFocus(),
     };
   };
+  // Marca manual, para las fases que no son eventos (antes de escribir, tras escribir).
+  window.__e2eFindSnap = (kind) => push({ kind, ...read() });
   const input = ${FIND_DIALOG_EXPRESSION}?.querySelector('${FIND_INPUT_SELECTOR}') ?? null;
   if (input && !input.__e2eTraced) {
     input.__e2eTraced = true;
     [
       'beforeinput', 'input', 'keydown', 'keyup', 'change', 'paste',
-      'compositionstart', 'compositionupdate', 'compositionend', 'focus', 'blur',
+      'compositionstart', 'compositionend', 'focus', 'blur',
     ].forEach((type) => {
       input.addEventListener(type, (event) => push({
         kind: type,
@@ -358,17 +349,22 @@ const FIND_TRACE_EXPRESSION = `(() => {
     });
   }
   // Teclas que llegan al documento: una pulsación perdida fuera del campo también
-  // puede acabar dentro si el foco vuelve a él a mitad del evento.
+  // puede acabar dentro si el foco vuelve a él a mitad del evento. Las que van al
+  // propio campo no se repiten aquí: ya las registra su listener.
   if (!window.__e2eDocKeyTrace) {
     window.__e2eDocKeyTrace = true;
-    document.addEventListener('keydown', (event) => push({
-      kind: 'doc-keydown',
-      ...read(),
-      key: event.key ?? null,
-      ctrl: Boolean(event.ctrlKey),
-      target: event.target?.tagName ?? null,
-      trusted: event.isTrusted,
-    }), true);
+    document.addEventListener('keydown', (event) => {
+      const field = (${FIND_DIALOG_EXPRESSION})?.querySelector('${FIND_INPUT_SELECTOR}') ?? null;
+      if (event.target === field) return;
+      push({
+        kind: 'doc-keydown',
+        ...read(),
+        key: event.key ?? null,
+        ctrl: Boolean(event.ctrlKey),
+        target: event.target?.tagName ?? null,
+        trusted: event.isTrusted,
+      });
+    }, true);
   }
   if (!window.__e2eFindTimer) {
     let last = null;
@@ -383,24 +379,14 @@ const FIND_TRACE_EXPRESSION = `(() => {
   return true;
 })()`;
 
-const findTraceSnap = (kind) => `(() => {
-  const input = ${FIND_DIALOG_EXPRESSION}?.querySelector('${FIND_INPUT_SELECTOR}') ?? null;
-  window.__e2eFindTrace.push({
-    t: Math.round(performance.now()),
-    kind: ${JSON.stringify(kind)},
-    value: input?.value ?? null,
-    selStart: input?.selectionStart ?? null,
-    selEnd: input?.selectionEnd ?? null,
-    focused: document.activeElement === input,
-    hasFocus: document.hasFocus(),
-  });
-  return true;
-})()`;
-
 const FIND_TRACE_READ = 'window.__e2eFindTrace ? window.__e2eFindTrace.slice(-120) : null';
 
 async function setFindQuery(client, text) {
-  const before = await client.evaluate(FIND_INPUT_SNAPSHOT);
+  // La traza se instala antes de escribir, así el `input` que dispara la propia
+  // escritura y todo lo que venga después quedan registrados.
+  await client.evaluate(FIND_TRACE_EXPRESSION);
+  await client.evaluate('window.__e2eFindSnap("before-setFindQuery")');
+
   const changed = await client.evaluate(`(() => {
     const dialog = ${FIND_DIALOG_EXPRESSION};
     const input = dialog?.querySelector('${FIND_INPUT_SELECTOR}');
@@ -411,9 +397,7 @@ async function setFindQuery(client, text) {
     return true;
   })()`);
   assert.equal(changed, true, 'No se encontró el campo del buscador.');
-  await client.evaluate(FIND_TRACE_EXPRESSION);
-  await client.evaluate(findTraceSnap(`setFindQuery:${text}`));
-  findQuerySnapshots = { text, before, after: await client.evaluate(FIND_INPUT_SNAPSHOT) };
+  await client.evaluate(`window.__e2eFindSnap(${JSON.stringify(`setFindQuery:${text}`)})`);
 }
 
 /**
@@ -436,8 +420,7 @@ async function waitForSettledStatus(client, query, mode, previousStatus) {
       throw new Error(
         `El buscador perdió el texto «${query}»: ahora tiene «${state.value}» ` +
           `(selección ${state.selStart}-${state.selEnd}, campo enfocado ${state.focused}, ` +
-          `documento enfocado ${state.documentFocused}, ` +
-          `antes y después de escribirlo: ${JSON.stringify(findQuerySnapshots)}).`,
+          `documento enfocado ${state.documentFocused}; la traza de arriba dice qué pasó entre medias).`,
       );
     }
 

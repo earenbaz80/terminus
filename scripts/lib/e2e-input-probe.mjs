@@ -6,13 +6,10 @@
  * de la barra de direcciones y si su lista de sugerencias está desplegada. Solo
  * lee el DOM: no toca ni el estado ni la lógica de la app.
  */
-export function inputProbeExpression(
-  addressSelector,
-  suggestionsId = 'terminus-address-suggestions',
-) {
+export function inputProbeExpression(addressSelector) {
   return `(() => {
     const address = document.querySelector(${JSON.stringify(addressSelector)});
-    const list = document.getElementById(${JSON.stringify(suggestionsId)});
+    const list = document.getElementById('terminus-address-suggestions');
     return {
       hasFocus: document.hasFocus(),
       address: address
