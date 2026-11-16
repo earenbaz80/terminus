@@ -177,7 +177,7 @@ const menuState = async (page) => {
 async function clickToggle(state, label) {
   const page = state.toggle.page();
   let lastError = null;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       await state.toggle.click({ timeout: 10000 });
       return;
@@ -187,7 +187,7 @@ async function clickToggle(state, label) {
       const detached = /detached from the DOM|not attached to the DOM/i.test(message);
       console.log(
         `${LOG} El interruptor no aceptó el clic (${label}, intento ${attempt}): ` +
-          (detached ? 'se desprendió del DOM' : message.split(String.fromCharCode(10))[0])
+          (detached ? 'se desprendió del DOM' : message.slice(0, 160))
       );
       if (!detached) break;
       await page.waitForTimeout(200);
@@ -201,7 +201,6 @@ async function clickToggle(state, label) {
         dialog: Boolean(dialog),
         buttons: buttons.length,
         pressed: buttons.map((button) => button.getAttribute('aria-pressed')),
-        text: (dialog ? dialog.textContent : '').slice(0, 160),
       };
     })()`)
     .catch(() => null);
