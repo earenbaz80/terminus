@@ -326,10 +326,10 @@ Con `--vk 84` (`KeyT`) el paso 2 falla igual, en 3 de 3 corridas: «Fixture» �
 La detección de entrada del sistema de la suite `ui` (`where` de cada tecla ajena) se validó con inyección real `SendInput`, no solo con CDP:
 
 - inicio: `--suite scripts/e2e-installed-ui.mjs --on "PASS 8/12" --vk 84 --runs 3` → 3 de 3 registran `inicio`/`KeyT`/84 con `sentByTest: false`, y la suite cierra 12/12 sin `FAIL`.
-- barra: `--suite scripts/e2e-installed-ui.mjs --vk 84 --delays 2000,3000,4000` → 4 de 4 (con 7000) registran `barra`/`KeyT`/84 con `sentByTest: false`.
-- resultados: `--suite scripts/e2e-installed-ui.mjs --vk 9,84 --delays 2800,3100,3300` → 3 de 3, con el Tab previo en `documento` y la letra en `resultados`/`KeyT`/84; el campo conserva la consulta de los resultados.
+- barra: `--suite scripts/e2e-installed-ui.mjs --on "PASS 10/12" --vk 84 --runs 3`, en dos tandas → 6 de 6 registran `barra`/`KeyT`/84; la corrida acaba en 11/12 con `FAIL: Timeout esperando el inicio de la primera pestaña ant…`, que es la tecla ensuciando la navegación. Por retardo también sale (`--vk 84 --delays 2000,3000,4000` → 4 de 4), pero el marcador es estable y no depende del arranque de Electron.
+- resultados: `--suite scripts/e2e-installed-ui.mjs --vk 9,84 --delays 2800,3100,3300` → 3 de 3, con el Tab previo en `documento` y la letra en `resultados`/`KeyT`/84; el campo conserva la consulta de los resultados. Ningún marcador lo alcanza: ver abajo.
 
-El campo de resultados no recibe foco en ningún paso de la suite, así que llegar a él exige un Tab real delante. Con retardos fijos el arranque de Electron mueve la ventana de foco (5200 ms ya cae en `documento`); `--on` fue estable en `PASS 8/12` para el inicio, pero con `--on "PASS 1/12"` solo 2 de 3 corridas registraron la tecla, así que la barra se cubre por retardo.
+La caja de resultados sigue necesitando el retardo porque ningún marcador la alcanza de forma estable. Ningún paso de la suite enfoca ese campo, así que solo se llega con un Tab desde un documento sin foco —lo que pasa mientras el paso 6 redimensiona— y esa ventana dura unos 500 ms; además el marcador llega tarde porque la salida del hijo va por un pipe y se entrega con retraso cuando Electron está ocupado. Probados `PASS 4/12` con entre dos y cuatro Tabs, `PASS 5/12` solo y con 200/400/600 ms de desplazamiento anclado al marcador, `PASS 6/12`, `PASS 7/12`, `PASS 9/12` y `PASS 11/12`, el mejor resultado fue 2 de 5 (`documento` + `resultados`) y el resto cayó en `barra`, `inicio`, `documento` o lista vacía. Por eso el inicio y la barra se disparan con `--on` y los resultados con retardo.
 
 ## Lista de comprobación
 
