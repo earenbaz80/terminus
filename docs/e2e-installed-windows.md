@@ -257,19 +257,19 @@ Solo aplican al **respaldo**, es decir, a un build instalado anterior a los `dat
 
 ### Cómo se lee la traza del buscador
 
-Cada corrida de Ctrl+F cierra con una línea `Teclas no enviadas por la prueba (<dónde>): [...] · ventana de Terminus en primer plano: true|false`, y también se imprime en el fallo con `<dónde>` = `al perder el texto`. La lista está vacía en una corrida limpia: contiene solo los `keydown` que no envió la suite.
+Cada corrida de Ctrl+F cierra con una línea `Teclas no enviadas por la prueba (<dónde>): [...]`, y también se imprime en el fallo con `<dónde>` = `al perder el texto`. La lista está vacía en una corrida limpia: contiene solo los `keydown` que no envió la suite.
 
 Para distinguirlos, la suite abre una marca (`window.__e2eSyntheticUntil`) justo antes de cada tecla que envía —`Ctrl+F` nativo, `Ctrl+F` por CDP, `Enter` de la barra y `Escape`— y la cierra en cuanto la tecla se procesó. Un `keydown` que llega fuera de esa ventana es ajeno a la prueba y se registra:
 
 | Campo | Para qué sirve |
 | --- | --- |
 | `sentByTest` | `false` = la tecla no salió de la suite: entró por el sistema (teclado físico, `SendKeys` de otro proceso, gestor de entrada). |
-| `key`, `code`, `keyCode`, `which`, `location` | Qué tecla y en qué posición física. Un espacio ajeno aparece como `key: " "`, `code: "Space"`, `keyCode: 32`; el teclado numérico o la mano derecha se ven en `location`. |
-| `trusted`, `repeat`, `composing` | `trusted` es `true` también en las teclas que inyecta CDP, por eso no basta como discriminante; `repeat` delata una tecla mantenida y `composing` un IME. |
-| `hasFocus`, `visibility` | Foco del documento y visibilidad en el momento del evento: separa una tecla que entró con la app activa de otra que llegó con la ventana oculta. |
+| `key`, `code`, `keyCode` | Qué tecla. Un espacio ajeno aparece como `key: " "`, `code: "Space"`, `keyCode: 32`. |
+| `trusted` | `true` también en las teclas que inyecta CDP, por eso no basta como discriminante: el que decide es `sentByTest`. |
+| `hasFocus`, `visibility` | Foco del documento y visibilidad en el instante del evento: separan una tecla que entró con la app activa de otra que llegó con la ventana oculta. |
 | `value`, `selStart`, `selEnd`, `focused` | Estado del campo en ese instante; junto al `tick` de 40 ms muestra si el carácter entró antes o después de la comprobación. |
 
-El primer plano de la ventana se lee cuando se imprime la línea, no en el instante de la tecla, así que es una pista: si `sentByTest` es `false`, `hasFocus` es `true` y `visibility` es `visible`, la pulsación llegó con la app activa y el culpable está fuera de la prueba.
+Con `sentByTest` en `false`, `hasFocus` en `true` y `visibility` en `visible`, la pulsación llegó con la app activa y la originó algo fuera de la prueba: el teclado físico, otro proceso que inyecta teclas o un gestor de entrada. Con la ventana oculta no pudo entrar por el teclado ni por `SendKeys`, así que el registro apunta a algo que publica eventos en el renderer.
 | `El iframe REAL no recibió el foco` | Ventana oculta, modal abierto o escritorio no interactivo. | Mantén la sesión visible, cierra diálogos y vuelve a lanzar la prueba. |
 | `No se encontró «Fixture»` en OSCURO/TEXTO | El proxy no pudo acceder al fixture loopback. | Comprueba que el firewall permita loopback; el E2E ya define `TERMINUS_BLOCK_PRIVATE=0` y `TERMINUS_NETWORK_POLICY=local` para la instancia de prueba. |
 | El instalador termina con código distinto de 0 | Instalación por usuario bloqueada o disco lleno. | Ejecuta el instalador en la misma cuenta del runner y revisa espacio/permisos. |
