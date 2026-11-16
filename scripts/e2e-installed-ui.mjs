@@ -220,39 +220,38 @@ async function logStrayKeys(client, label) {
  * Traza del Enter en la barra de direcciones: qué sugerencia estaba resaltada al
  * pulsarlo. La app ejecuta la sugerencia resaltada en vez del comando escrito
  * (`suggestionIndex >= 0`), y también la resalta al pasar el ratón por encima, así que
- * un clic previo puede dejarla seleccionada sin que nadie pulse una flecha. Solo lee el
- * DOM: no cambia nada de la app ni de las condiciones de ningún paso.
+ * una lista que se dibuja bajo un cursor quieto puede dejarla elegida sin que nadie
+ * apunte. Solo lee el DOM: no cambia nada de la app ni de las condiciones de ningún paso.
+ *
+ * El hover sale de `:hover`, que es el estado real del puntero: no depende de que llegue
+ * un `mousemove`, que es justo lo que falta cuando el cursor está quieto y la lista
+ * aparece debajo. Con la última posición del puntero ese caso salía `false`.
  */
 const ENTER_TRACE_EXPRESSION = `(() => {
   const input = document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)});
   if (!input) return false;
   if (window.__e2eEnterTrace) return true;
   window.__e2eEnterTrace = [];
-  window.__e2ePointer = null;
-  document.addEventListener('mousemove', (event) => {
-    window.__e2ePointer = { x: event.clientX, y: event.clientY };
-  }, true);
   const read = () => {
     const box = document.getElementById('terminus-address-suggestions');
     const options = box ? [...box.querySelectorAll('[role="option"]')] : [];
     const selected = options.filter((option) => option.getAttribute('aria-selected') === 'true');
+    const hovered = options.find((option) => option.matches(':hover'));
     return {
       options: options.length,
       selected: selected.map((option) => (option.textContent ?? '').trim().slice(0, 60)),
       selectedIndex: options.indexOf(selected[0]),
+      optionHovered: hovered ? (hovered.textContent ?? '').trim().slice(0, 60) : null,
+      pointerOverList: Boolean(box && box.matches(':hover')),
     };
   };
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
-    const pointer = window.__e2ePointer;
-    const under = pointer ? document.elementFromPoint(pointer.x, pointer.y) : null;
-    const box = document.getElementById('terminus-address-suggestions');
     window.__e2eEnterTrace.push({
       at: Math.round(performance.now()),
       value: input.value,
       isTrusted: event.isTrusted,
       ...read(),
-      pointerOverList: Boolean(box && under && box.contains(under)),
     });
   }, true);
   return true;

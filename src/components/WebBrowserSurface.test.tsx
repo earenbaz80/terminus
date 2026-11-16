@@ -186,6 +186,41 @@ describe('WebBrowserSurface', () => {
     expect(onCommand).toHaveBeenCalledWith('goto https://example.com');
   });
 
+  it('keeps the typed command when a suggestion only appeared under a still pointer', () => {
+    const { onCommand } = renderSurface(pageTab);
+    const addressInput = screen.getByRole('textbox', { name: 'Barra de direcciones y búsqueda' }) as HTMLInputElement;
+
+    fireEvent.focus(addressInput);
+    fireEvent.change(addressInput, { target: { value: 'exa' } });
+    const option = screen.getByRole('option', { name: /example\.com/ });
+
+    // Es lo que manda el navegador cuando la lista se dibuja bajo un cursor quieto.
+    fireEvent.mouseOver(option);
+    expect(option.getAttribute('aria-selected')).toBe('false');
+
+    fireEvent.submit(addressInput.closest('form')!);
+    expect(onCommand).toHaveBeenCalledWith('exa');
+  });
+
+  it('lets a pointer that moves choose the suggestion, and drops it when it leaves', () => {
+    const { onCommand } = renderSurface(pageTab);
+    const addressInput = screen.getByRole('textbox', { name: 'Barra de direcciones y búsqueda' }) as HTMLInputElement;
+
+    fireEvent.focus(addressInput);
+    fireEvent.change(addressInput, { target: { value: 'exa' } });
+    const option = screen.getByRole('option', { name: /example\.com/ });
+
+    fireEvent.mouseMove(option);
+    expect(option.getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.mouseLeave(option);
+    expect(option.getAttribute('aria-selected')).toBe('false');
+
+    fireEvent.mouseMove(option);
+    fireEvent.submit(addressInput.closest('form')!);
+    expect(onCommand).toHaveBeenCalledWith('goto https://example.com');
+  });
+
   it('suggests pages from the global history across tabs', () => {
     const { onCommand } = renderSurface(pageTab, {
       globalHistory: ['https://global.example/nota'],
