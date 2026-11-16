@@ -154,6 +154,63 @@ async function pressEnter(client) {
   await client.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
 }
 
+/**
+ * Traza del Enter en la barra de direcciones: qué sugerencia estaba resaltada al
+ * pulsarlo. La app ejecuta la sugerencia resaltada en vez del comando escrito
+ * (`suggestionIndex >= 0`), y también la resalta al pasar el ratón por encima, así que
+ * un clic previo puede dejarla seleccionada sin que nadie pulse una flecha. Solo lee el
+ * DOM: no cambia nada de la app ni de las condiciones de ningún paso.
+ */
+const ENTER_TRACE_EXPRESSION = `(() => {
+  const input = document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)});
+  if (!input) return false;
+  if (window.__e2eEnterTrace) return true;
+  window.__e2eEnterTrace = [];
+  window.__e2ePointer = null;
+  document.addEventListener('mousemove', (event) => {
+    window.__e2ePointer = { x: event.clientX, y: event.clientY };
+  }, true);
+  const read = () => {
+    const box = document.getElementById('terminus-address-suggestions');
+    const options = box ? [...box.querySelectorAll('[role="option"]')] : [];
+    const selected = options.filter((option) => option.getAttribute('aria-selected') === 'true');
+    return {
+      open: Boolean(box) && box.getClientRects().length > 0,
+      options: options.length,
+      selected: selected.map((option) => (option.textContent ?? '').trim().slice(0, 60)),
+      selectedIndex: options.indexOf(selected[0]),
+      labels: options.map((option) => (option.textContent ?? '').trim().slice(0, 40)).slice(0, 5),
+    };
+  };
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    const pointer = window.__e2ePointer;
+    const under = pointer ? document.elementFromPoint(pointer.x, pointer.y) : null;
+    const box = document.getElementById('terminus-address-suggestions');
+    window.__e2eEnterTrace.push({
+      at: Math.round(performance.now()),
+      value: input.value,
+      isTrusted: event.isTrusted,
+      ...read(),
+      pointerOverList: Boolean(box && under && box.contains(under)),
+    });
+  }, true);
+  return true;
+})()`;
+
+/** Instala la traza del Enter; la llama cada comando porque el reload del paso 3 la borra. */
+async function installEnterTrace(client) {
+  const installed = await client.evaluate(ENTER_TRACE_EXPRESSION).catch(() => false);
+  assert.equal(installed, true, 'No se pudo instalar la traza del Enter en la barra.');
+}
+
+/** Últimos Enter pulsados en la barra, con la sugerencia que estaba resaltada. */
+async function readEnterTrace(client) {
+  return client
+    .evaluate('window.__e2eEnterTrace ? window.__e2eEnterTrace.slice(-3) : null')
+    .catch(() => null);
+}
+
 /** Runs a terminal command through the address bar of the browser surface. */
 async function runCommand(client, command) {
   const address = JSON.stringify(ADDRESS_SELECTOR);
@@ -176,6 +233,7 @@ async function runCommand(client, command) {
   );
   // Deja que React aplique el valor antes de enviar Enter.
   await sleep(200);
+  await installEnterTrace(client);
   await pressEnter(client);
 }
 
@@ -851,7 +909,10 @@ async function main() {
     (state) => state.onStart && state.focused,
     'el inicio con el campo enfocado tras «inicio»',
     20000,
-  );
+  ).catch(async (error) => {
+    console.log(`${LOG} Enter tras «inicio»: ${JSON.stringify(await readEnterTrace(cdp))}`);
+    throw error;
+  });
 
   pass('el sinónimo «inicio» vuelve al inicio con el campo enfocado, como «home».');
 
@@ -906,6 +967,7 @@ async function main() {
       })()`)
       .catch(() => null);
     console.log(`${LOG} Huella de «tab new web»: ${JSON.stringify(fingerprint)}`);
+    console.log(`${LOG} Enter tras «tab new web»: ${JSON.stringify(await readEnterTrace(cdp))}`);
     throw error;
   });
   assert.deepEqual(
