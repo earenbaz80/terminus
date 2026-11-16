@@ -277,6 +277,21 @@ La suite `ui` aplica la misma detección a las tres cajas donde se escribe: el c
 | El instalador termina con código distinto de 0 | Instalación por usuario bloqueada o disco lleno. | Ejecuta el instalador en la misma cuenta del runner y revisa espacio/permisos. |
 | `npm ci` falla en el runner | Node incorrecto o lockfile desactualizado. | Usa Node 22+ y no ejecutes `npm ci --force`; regenera el lockfile solo si el cambio de dependencias es intencional. |
 
+### Cómo se lee la traza del Enter de la barra
+
+`installEnterTrace` escucha en captura el `keydown` de la barra de direcciones y, cuando llega un `Enter`, guarda el estado en `window.__e2eEnterTrace` (los tres últimos); se reinstala antes de cada comando porque el `Page.reload` del paso 3 borra el renderer. Si la espera del paso 8 falla, el log imprime `Enter tras «inicio»: [...]` con el último estado, que es lo que clasifica el fallo sin adivinar.
+
+| Campo | Para qué sirve |
+| --- | --- |
+| `value` | Lo que la barra tenía escrito al pulsar Enter. |
+| `options`, `selected`, `selectedIndex` | Cuántas sugerencias había, cuál llevaba `aria-selected="true"` y su índice. Con `selectedIndex` en `-1` no había ninguna resaltada y Enter ejecutó el comando escrito. |
+| `optionHovered`, `pointerOverList` | Sobre qué opción estaba el puntero y si estaba sobre la lista, leído con `:hover`. Es el estado real del puntero y no depende de que llegue un `mousemove`: con el cursor quieto ese evento no existe, que es justo el caso a diagnosticar. Antes se calculaba con la última posición del puntero y `elementFromPoint`, y en ese caso salía `false` aunque hubiera una sugerencia resaltada. |
+| `isTrusted` | `true` también para las teclas que envía CDP: no distingue quién pulsó. |
+
+**Mecanismo del fallo del paso 8.** `submit` de `WebBrowserSurface` ejecuta la sugerencia resaltada (`suggestionIndex >= 0`) antes que el comando escrito, y el índice lo fijaba `onMouseEnter`. Cuando la lista se dibuja debajo de un cursor inmóvil, el navegador dispara `mouseenter` sin que nadie mueva el ratón: la opción quedaba elegida y el `Enter` del paso 8 abría `terminus://search?q=inicio` en vez de volver al inicio. Su firma en la traza es `selectedIndex: 0` con `optionHovered` apuntando a `Buscar «inicio»`; si no hay sugerencia resaltada, el `Enter` ejecutó el comando y el paso no puede fallar por esto.
+
+Se reprodujo a voluntad dejando el puntero sobre la opción antes del `Enter` (7 de 12 pasos, con `selectedIndex: 0` y `pointerOverList: true`), y se arregló en `src/components/WebBrowserSurface.tsx` resaltando solo con `onMouseMove` —un puntero que se mueve de verdad— y quitando la elección con `onMouseLeave` cuando el puntero sale de esa opción, con dos pruebas de regresión en `WebBrowserSurface.test.tsx`: la que aparece bajo un cursor quieto no se elige, y la que recibe un movimiento sí (y deja de estarlo al salir). Medido después del arreglo: `ui 12/12` y `ui-de 12/12` sobre el instalador recompilado, y con la lista dibujada bajo un puntero que no se mueve ninguna opción queda resaltada y `Enter` ejecuta el comando.
+
 ## Lista de comprobación
 
 - [ ] El runner está en una sesión interactiva (`SessionId != 0`).

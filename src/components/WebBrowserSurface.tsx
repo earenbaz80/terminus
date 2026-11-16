@@ -1532,11 +1532,11 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
                     role="option"
                     aria-selected={index === suggestionIndex}
                     onMouseDown={(event) => event.preventDefault()}
-                    // Solo elige el puntero que se mueve. Al dibujarse la lista bajo un cursor
-                    // quieto el navegador dispara `mouseenter` sin que nadie apunte, y Enter
-                    // ejecutaría esa sugerencia en vez del comando escrito.
-                    onMouseMove={() =>
-                      setSuggestionIndex((previous) => (previous === index ? previous : index))
+                    // Solo elige el puntero que se mueve: al dibujarse la lista bajo un cursor
+                    // quieto el navegador dispara `mouseenter` sin que nadie apunte.
+                    onMouseMove={() => setSuggestionIndex(index)}
+                    onMouseLeave={() =>
+                      setSuggestionIndex((previous) => (previous === index ? -1 : previous))
                     }
                     onClick={() => selectSuggestion(suggestion)}
                     className="flex w-full items-center gap-2 border-b px-2 py-1.5 text-left last:border-b-0 cursor-pointer"
