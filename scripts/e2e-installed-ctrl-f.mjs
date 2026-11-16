@@ -26,6 +26,14 @@ import path from 'node:path';
 import { suiteSteps } from './e2e-suites.mjs';
 import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
 import {
+  CLEAR_TEST_KEYS,
+  READ_STRAY_KEYS,
+  SENT_BY_TEST,
+  STRAY_LIST,
+  markTestKeys,
+  strayKeysLine,
+} from './lib/e2e-stray-keys.mjs';
+import {
   assertInstalledMatchesBuild,
   captureFailureScreenshot,
   launchInstalledApp,
@@ -340,14 +348,12 @@ const FIND_TRACE_EXPRESSION = `(() => {
     code: event.code ?? null,
     keyCode: event.keyCode ?? null,
     visibility: document.visibilityState,
-    sentByTest:
-      typeof window.__e2eSyntheticUntil === 'number' &&
-      performance.now() <= window.__e2eSyntheticUntil,
+    sentByTest: ${SENT_BY_TEST},
   });
   const noteStray = (entry) => {
-    window.__e2eStrayKeys = window.__e2eStrayKeys || [];
-    window.__e2eStrayKeys.push(entry);
-    if (window.__e2eStrayKeys.length > 20) window.__e2eStrayKeys.shift();
+    const list = (window.${STRAY_LIST} = window.${STRAY_LIST} || []);
+    list.push(entry);
+    if (list.length > 20) list.shift();
   };
   // Marca manual, para las fases que no son eventos (antes de escribir, tras escribir).
   window.__e2eFindSnap = (kind) => push({ kind, ...read() });
@@ -406,13 +412,10 @@ const FIND_TRACE_EXPRESSION = `(() => {
 })()`;
 
 const FIND_TRACE_READ = 'window.__e2eFindTrace ? window.__e2eFindTrace.slice(-120) : null';
-const FIND_STRAY_READ = 'window.__e2eStrayKeys ? window.__e2eStrayKeys : []';
 
 /** Marca la ventana en la que las teclas que lleguen son las que envía la propia prueba. */
 async function markSyntheticKeys(client, ms = 400) {
-  await client
-    .evaluate(`window.__e2eSyntheticUntil = performance.now() + ${ms}`)
-    .catch(() => undefined);
+  await client.evaluate(markTestKeys(ms)).catch(() => undefined);
 }
 
 /**
@@ -420,13 +423,13 @@ async function markSyntheticKeys(client, ms = 400) {
  * segundos tragaría como propias las teclas que llegan después.
  */
 async function clearSyntheticKeys(client) {
-  await client.evaluate('window.__e2eSyntheticUntil = 0').catch(() => undefined);
+  await client.evaluate(CLEAR_TEST_KEYS).catch(() => undefined);
 }
 
 /** Teclas que no envió la prueba, tal como las registró el campo o el documento. */
 async function logStrayKeys(client, label) {
-  const stray = await client.evaluate(FIND_STRAY_READ).catch(() => null);
-  console.log(`${LOG} Teclas no enviadas por la prueba (${label}): ${JSON.stringify(stray)}`);
+  const stray = await client.evaluate(READ_STRAY_KEYS).catch(() => null);
+  console.log(strayKeysLine(LOG, label, stray));
 }
 
 async function setFindQuery(client, text) {
