@@ -32,6 +32,14 @@ import path from 'node:path';
 import { suiteSteps } from './e2e-suites.mjs';
 import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
 import {
+  CLEAR_TEST_KEYS,
+  READ_STRAY_KEYS,
+  SENT_BY_TEST,
+  STRAY_LIST,
+  markTestKeys,
+  strayKeysLine,
+} from './lib/e2e-stray-keys.mjs';
+import {
   assertInstalledMatchesBuild,
   captureFailureScreenshot,
   launchInstalledApp,
@@ -150,11 +158,11 @@ const ROOT_STATE_EXPRESSION = `(() => {
 /** Presses Enter through CDP so the renderer handles it as a real key press. */
 async function pressEnter(client) {
   // Marca la ventana en la que las teclas que lleguen son las que envía la prueba.
-  await client.evaluate('window.__e2eSyntheticUntil = performance.now() + 400').catch(() => undefined);
+  await client.evaluate(markTestKeys()).catch(() => undefined);
   const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
   await client.send('Input.dispatchKeyEvent', { type: 'keyDown', ...key, text: '\r', unmodifiedText: '\r' });
   await client.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
-  await client.evaluate('window.__e2eSyntheticUntil = 0').catch(() => undefined);
+  await client.evaluate(CLEAR_TEST_KEYS).catch(() => undefined);
 }
 
 /**
@@ -163,27 +171,23 @@ async function pressEnter(client) {
  * explica un «un carácter» sin tener que adivinar con el valor final.
  */
 const START_STRAY_EXPRESSION = `(() => {
-  window.__e2eStartStrayKeys = window.__e2eStartStrayKeys || [];
   if (window.__e2eStartStrayTrace) return true;
   window.__e2eStartStrayTrace = true;
-  const field = () => document.querySelector(${JSON.stringify(START_INPUT)});
   document.addEventListener('keydown', (event) => {
-    const sentByTest =
-      typeof window.__e2eSyntheticUntil === 'number' &&
-      performance.now() <= window.__e2eSyntheticUntil;
-    if (sentByTest) return;
-    window.__e2eStartStrayKeys.push({
-      t: Math.round(performance.now()),
-      where: event.target === field() ? 'campo' : 'documento',
+    if (${SENT_BY_TEST}) return;
+    const field = document.querySelector(${JSON.stringify(START_INPUT)});
+    const list = (window.${STRAY_LIST} = window.${STRAY_LIST} || []);
+    list.push({
+      where: event.target === field ? 'campo' : 'documento',
       sentByTest: false,
       key: event.key ?? null,
       code: event.code ?? null,
       keyCode: event.keyCode ?? null,
       visibility: document.visibilityState,
       hasFocus: document.hasFocus(),
-      value: field()?.value ?? null,
+      value: field?.value ?? null,
     });
-    if (window.__e2eStartStrayKeys.length > 20) window.__e2eStartStrayKeys.shift();
+    if (list.length > 20) list.shift();
   }, true);
   return true;
 })()`;
@@ -192,15 +196,16 @@ const START_STRAY_EXPRESSION = `(() => {
 const strayKeys = [];
 async function collectStrayKeys(client) {
   const found = await client
-    .evaluate('window.__e2eStartStrayKeys ? window.__e2eStartStrayKeys.splice(0) : []')
+    .evaluate(READ_STRAY_KEYS)
     .catch(() => null);
   if (Array.isArray(found)) strayKeys.push(...found);
   return strayKeys;
 }
 
-/** Imprime lo acumulado desde la última línea y lo vacía, para no repetir la misma tecla. */
-function logStrayKeys(label) {
-  console.log(`${LOG} Teclas no enviadas por la prueba (${label}): ${JSON.stringify(strayKeys.splice(0))}`);
+/** Lee el renderer, imprime lo que haya y vacía lo acumulado: una tecla no se repite. */
+async function logStrayKeys(client, label) {
+  await collectStrayKeys(client);
+  console.log(strayKeysLine(LOG, label, strayKeys.splice(0)));
 }
 
 /**
@@ -684,8 +689,6 @@ async function main() {
     'la búsqueda del inicio en un solo paso',
     25000,
   ).catch(async (error) => {
-    await collectStrayKeys(cdp);
-    logStrayKeys('al perder la búsqueda del inicio');
     const events = await cdp.evaluate('window.__e2eFieldEvents').catch(() => null);
     const probe = await cdp.evaluate(inputProbeExpression(ADDRESS_SELECTOR)).catch(() => null);
     console.log(`${LOG} Eventos del campo del inicio: ${JSON.stringify(events)}`);
@@ -693,7 +696,6 @@ async function main() {
     throw error;
   });
 
-  await collectStrayKeys(cdp);
   pass(`búsqueda del inicio en un paso («search ${SEARCH_QUERY}» registrado, resultados en ${searched.address}).`);
   // 5. La búsqueda lanzada arriba queda como chip reciente del inicio.
   await runCommand(cdp, 'home');
@@ -778,7 +780,6 @@ async function main() {
     'los resultados de la segunda búsqueda',
     25000,
   );
-  await collectStrayKeys(cdp);
 
   // Dos recientes para que el recorte tenga algo que ocultar.
   await runCommand(cdp, 'home');
@@ -1132,6 +1133,7 @@ async function main() {
   // 11. Recargar el renderer: las dos pestañas vuelven con su URL, su historial y la activa.
   const beforeReload = await cdp.evaluate(SESSION_STATE_EXPRESSION);
   await cdp.send('Page.enable');
+  await collectStrayKeys(cdp);
   await cdp.send('Page.reload', { ignoreCache: false });
 
   const restoredTabs = await waitForExpression(
@@ -1296,9 +1298,6 @@ async function main() {
   // una emulación: se intenta quitar al final para no cerrar con ella puesta.
   await cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined);
 
-  await collectStrayKeys(cdp);
-  logStrayKeys('fin de la corrida');
-
   assert.equal(
     stepsRun,
     TOTAL_STEPS,
@@ -1320,10 +1319,11 @@ try {
   }
   // Una imagen del estado en el momento del fallo ahorra adivinar con el JSON del timeout.
   await captureFailureScreenshot(app?.client, 'ui');
-  if (app?.client) await collectStrayKeys(app.client).catch(() => undefined);
-  if (strayKeys.length) logStrayKeys('al fallar');
   process.exitCode = 1;
 } finally {
+  // Una sola línea para la corrida entera, en verde o en fallo: el FAIL de arriba dice
+  // en qué paso fue. La recarga del paso 11 borra el renderer, por eso se lee antes.
+  if (app?.client) await logStrayKeys(app.client, 'fin de la corrida').catch(() => undefined);
   // El paso del E2E en CI lee esta línea para comparar con el total esperado.
   console.log(LOG + ' STEPS: ' + stepsRun + '/' + TOTAL_STEPS);
   await app?.cleanup();
