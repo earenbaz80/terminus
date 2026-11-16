@@ -175,6 +175,7 @@ const START_STRAY_EXPRESSION = `(() => {
     window.__e2eStartStrayKeys.push({
       t: Math.round(performance.now()),
       where: event.target === field() ? 'campo' : 'documento',
+      sentByTest: false,
       key: event.key ?? null,
       code: event.code ?? null,
       keyCode: event.keyCode ?? null,
@@ -518,6 +519,9 @@ async function main() {
     },
   });
   const cdp = app.client;
+  // Desde el arranque, para que la línea final cubra toda la corrida y no solo los pasos
+  // del inicio. Es idempotente y se repite tras cada recarga, que borra el renderer.
+  await cdp.evaluate(START_STRAY_EXPRESSION).catch(() => undefined);
 
   if (e2eLocale) await applyE2ELocale(cdp);
 
@@ -580,6 +584,7 @@ async function main() {
     `el tema ${chosen.id} tras recargar la app`,
     30000,
   );
+  await cdp.evaluate(START_STRAY_EXPRESSION).catch(() => undefined);
 
   const reopened = await openSettingsMenu(cdp);
   assert.equal(reopened.theme, chosen.id, 'El menú no refleja el tema guardado tras recargar.');
@@ -613,7 +618,6 @@ async function main() {
   // Si el envío se pierde, bastan dos banderas: si el Enter llegó al campo y si el
   // formulario se envió. Separa «la tecla fue a otro sitio» de «el formulario no
   // reaccionó», que es toda la clasificación que hace falta aquí.
-  await cdp.evaluate(START_STRAY_EXPRESSION);
   await cdp.evaluate(`(() => {
     const input = document.querySelector(${JSON.stringify(START_INPUT)});
     window.__e2eFieldEvents = { enterOnField: false, submit: false, valueAtEnter: null, hasFocusAtEnter: null };
@@ -1153,7 +1157,7 @@ async function main() {
     'las dos pestañas con su URL e historial tras recargar el renderer',
     30000,
   );
-  assert.equal(
+  await cdp.evaluate(START_STRAY_EXPRESSION).catch(() => undefined);  assert.equal(
     restoredTabs.tabs[1].url,
     secondResult.address,
     'La segunda pestaña no volvió a su búsqueda tras recargar.',
