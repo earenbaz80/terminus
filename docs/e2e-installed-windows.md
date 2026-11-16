@@ -292,6 +292,31 @@ La suite `ui` aplica la misma detección a las tres cajas donde se escribe: el c
 
 Se reprodujo a voluntad dejando el puntero sobre la opción antes del `Enter` (7 de 12 pasos, con `selectedIndex: 0` y `pointerOverList: true`), y se arregló en `src/components/WebBrowserSurface.tsx` resaltando solo con `onMouseMove` —un puntero que se mueve de verdad— y quitando la elección con `onMouseLeave` cuando el puntero sale de esa opción, con dos pruebas de regresión en `WebBrowserSurface.test.tsx`: la que aparece bajo un cursor quieto no se elige, y la que recibe un movimiento sí (y deja de estarlo al salir). Medido después del arreglo: `ui 12/12` y `ui-de 12/12` sobre el instalador recompilado, y con la lista dibujada bajo un puntero que no se mueve ninguna opción queda resaltada y `Enter` ejecuta el comando.
 
+### Banco de inyección real para el flake de «un carácter»
+
+`scripts/e2e-ctrl-f-inject.mjs` corre la suite de Ctrl+F como hijo y, pasado un retardo desde el arranque, manda una pulsación de verdad con `SendInput` desde otro proceso: no pasa por CDP ni por la marca de la prueba. Sirve para comprobar que la suite clasifica como ajena una tecla que no envió y para reproducir el fallo del paso 2 sin esperar a que ocurra.
+
+```
+node scripts/e2e-ctrl-f-inject.mjs --delays 3500 --runs 5 --vk 32   # espacio real
+node scripts/e2e-ctrl-f-inject.mjs --delays 3500 --text "x"         # un carácter por unicode
+```
+
+`--delays` acepta varios separados por coma y `--runs` repite cada uno; cada corrida deja su log en `artifacts/injection/` y el resumen trae el código de salida, el `STEPS`, el `FAIL` y la línea de teclas ajenas. El envío vive en `scripts/lib/win-send-input.ps1` (`SendInput` por P/Invoke) y se llama desde Node con `sendRealKey` (`scripts/lib/e2e-real-keys.mjs`). La ventana destino tiene que estar en primer plano: si no lo está, el script reenfoca `Terminus` antes de enviar y lo informa en su JSON.
+
+**El `cbSize` importa.** La unión de `INPUT` tiene que declarar `MOUSEINPUT` además de `KEYBDINPUT`, porque `SendInput` compara el `cbSize` con el tamaño de la unión (40 bytes en x64). Declarando solo `KEYBDINPUT` mide 32 y la llamada devuelve 0 con `GetLastWin32Error` 87 (`ERROR_INVALID_PARAMETER`), sin más pista; por eso el script informa `inputSize` y `error` junto a `sent`.
+
+Retardos medidos sobre la app instalada, un espacio por `-Vk 32` contado desde el arranque de la suite:
+
+| retardo | corridas | fallos del paso 2 | registradas como ajenas |
+| --- | --- | --- | --- |
+| 2 500 ms | 1 | 0 | 0 |
+| 3 000 ms | 1 | 0 | 0 |
+| 3 500 ms | 6 | 6 | 6 |
+| 4 000 ms | 1 | 1 | 1 |
+| 4 500 ms | 1 | 1 | 1 |
+
+Hasta 3 s la tecla llega antes de que el campo del buscador tenga el foco (`PASS 1/5` tarda 3,0 s). Desde 3,5 s el campo amanece con el espacio y el `FAIL` es el histórico (`El buscador perdió el texto «Fixture»: ahora tiene «Fixture »`), con la pulsación en `Teclas no enviadas por la prueba (al perder el texto)` como `{"code":"Space","keyCode":32,"sentByTest":false,"where":"campo"}`. Sin inyección, la misma app cerró `5/5` con lista `[]` en 2 de 2 corridas.
+
 ## Lista de comprobación
 
 - [ ] El runner está en una sesión interactiva (`SessionId != 0`).
