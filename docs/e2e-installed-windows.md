@@ -115,7 +115,7 @@ No lances dos ejecuciones simultáneas sobre la misma rama: la política de conc
 
 Si el E2E está solicitado, antes de instalar dependencias se ejecuta un preflight que exige una sesión interactiva (`SessionId != 0` y `[Environment]::UserInteractive`). Si falla, el job termina antes de compilar o instalar nada.
 
-El workflow se parte en dos jobs encadenados para que el primer veredicto llegue en minutos y el build no se gaste en código que no pasa el lint (`windows` declara `needs: checks` y se salta si `checks` falla): `checks` (checkout, Node.js 22, actionlint —binario con versión y SHA-256 fijados—, `npm ci`, `npm run lint`, `npm run test:coverage` con el artefacto `coverage-lcov`, `npm audit` y la prueba Chromium del sandbox Python) y `windows` (gate del E2E, preflight, build, instalador, suites y artefactos). Un tercer job, `requerido`, no ejecuta nada: espera a los dos y falla si alguno falló, y conserva el nombre `Windows - lint, tests, cobertura y E2E opcional`, que es el contexto que exige la protección de `main`, así que el check obligatorio sigue siendo uno solo.
+El workflow se parte en cuatro jobs para que el primer veredicto llegue en minutos y el build no se gaste en código que no pasa el lint y ni siquiera en un PR sin código: `cambios` consulta los ficheros del PR (`gh api --paginate .../pulls/N/files`) y aplica el patrón de rutas de lo que se empaqueta —`src/`, `electron/`, `scripts/`, `assets/`, `index.html`, `package.json`/`package-lock.json`, `vite.config.`, `vitest.config.`, `tsconfig*.json` y `electron-builder`— para publicar `app_changed`; si la consulta falla o no devuelve ficheros responde `true`, porque un verde sin build es peor que un build de más, y deja siempre el motivo en el resumen del job. `checks` (checkout, Node.js 22, actionlint —binario con versión y SHA-256 fijados—, `npm ci`, `npm run lint`, `npm run test:coverage` con el artefacto `coverage-lcov`, `npm audit` y la prueba Chromium del sandbox Python) corre en todos los runs. `windows` (gate del E2E, preflight, build, instalador, suites y artefactos) declara `needs: [checks, cambios]` y se omite cuando `app_changed` no es `true`, así que un PR de solo documentación no compila nada; fuera de `pull_request` el detector responde `true` y el build corre como antes. `requerido` no ejecuta nada: espera a los tres, falla si alguno falló —un `windows` omitido se acepta a propósito— y conserva el nombre `Windows - lint, tests, cobertura y E2E opcional`, que es el contexto que exige la protección de `main`, así que el check obligatorio sigue siendo uno solo.
 
 Los pasos 1 a 7 son del job `checks`; el resto, de `windows`, que ejecuta en orden:
 
@@ -138,14 +138,14 @@ Los pasos 1 a 7 son del job `checks`; el resto, de `windows`, que ejecuta en ord
 
 El E2E se ejecuta cuando se cumple una de estas condiciones:
 
-- un PR del propio repositorio que toque `src/`, `electron/`, `scripts/`, `assets/`, `package.json`/`package-lock.json` o la configuración del build (corre las cuatro suites, igual que las demás condiciones);
+- un PR del propio repositorio que toque lo que se empaqueta, es decir lo que marca el patrón de rutas que evalúa el job `cambios` (corre las cuatro suites, igual que las demás condiciones); si el PR no lo toca, `windows` ni siquiera arranca, así que no hay E2E ni instalador;
 - el nocturno de `main` (`cron` a las 03:30 UTC), que corre las cuatro suites;
 - `workflow_dispatch` con `run_installed_e2e = true`;
 - la variable `TERMINUS_RUN_INSTALLED_E2E = true`, que es la que activa el E2E en cada push a `main` (salvo en PRs desde forks); hoy vale `true` y se cambia en Settings → Secrets and variables → Actions → Variables.
 
-En push no se filtra por ficheros cambiados (comparar contra `github.event.before`): el E2E añade unos 75 s al job (18 s de instalación y unos 57 s de suites, 19 de ellos de `network` con el build ya empaquetado) y es la única corrida que prueba exactamente el commit publicado, incluidos los merges de solo documentación que en el PR se saltaron el E2E. Un filtro ahorraría esos 56 s en esos merges a cambio de un camino de respaldo para cuando `before` no existe (primer push o fuerza), justo donde un fallo silencioso dejaría `main` sin probar.
+En push no se filtra por ficheros cambiados (comparar contra `github.event.before`): el E2E añade unos 75 s al job (18 s de instalación y unos 57 s de suites, 19 de ellos de `network` con el build ya empaquetado) y es la única corrida que prueba exactamente el commit publicado, incluido el merge de un PR de solo documentación, que en el PR se saltó el build entero. Un filtro ahorraría esos 56 s en esos merges a cambio de un camino de respaldo para cuando `before` no existe (primer push o fuerza), justo donde un fallo silencioso dejaría `main` sin probar.
 
-Un dispatch sobre una rama ya no cancela la corrida del PR: solo un push nuevo cancela la anterior de la misma referencia. En cualquier otro caso el E2E se omite, pero el build y el instalador sí se generan.
+Un dispatch sobre una rama ya no cancela la corrida del PR: solo un push nuevo cancela la anterior de la misma referencia. Dentro de `windows`, que solo existe cuando hay algo que empaquetar, el resto de los casos omite el E2E pero genera igual el build y el instalador.
 
 ## Evidencias esperadas
 
