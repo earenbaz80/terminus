@@ -67,11 +67,11 @@ En **Settings → Secrets and variables → Actions → Variables** crea:
 | Variable | Valor | Uso |
 | --- | --- | --- |
 | `TERMINUS_CI_RUNNER` | `terminus-e2e` | Etiqueta del runner interactivo. |
-| `TERMINUS_RUN_INSTALLED_E2E` | `true` | Opcional: ejecutar el E2E en cada push y en PRs del mismo repositorio. |
+| `TERMINUS_RUN_INSTALLED_E2E` | `true` | Opcional: ejecutar el E2E en cada push a `main` y en PRs del mismo repositorio. |
 
 Recomendación: deja `TERMINUS_RUN_INSTALLED_E2E` sin definir y lanza el E2E solo con `workflow_dispatch`. Así el runner interactivo no ejecuta la prueba en cada cambio.
 
-`TERMINUS_CI_RUNNER` debe contener **una sola etiqueta**. El workflow usa la etiqueta configurada para `push`, `workflow_dispatch` y PRs del mismo repositorio, pero **nunca** la usa para un PR desde un fork:
+`TERMINUS_CI_RUNNER` debe contener **una sola etiqueta**. El workflow usa la etiqueta configurada para `push` (que ya solo ocurre en `main`), `workflow_dispatch` y PRs del mismo repositorio, pero **nunca** la usa para un PR desde un fork:
 
 ```yaml
 runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'windows-latest' || vars.TERMINUS_CI_RUNNER || 'windows-latest' }}
