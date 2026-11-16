@@ -84,6 +84,21 @@ Con `TERMINUS_E2E_LOCALE=en npm run test:e2e:installed:ui` (o `de`, `fr`, `it`) 
 
 Para preparar un runner de GitHub Actions con escritorio interactivo, configurar las etiquetas y lanzar el E2E manualmente, consulta [docs/e2e-installed-windows.md](docs/e2e-installed-windows.md).
 
+### Cuándo corre CI
+
+El workflow `CI` (`.github/workflows/ci.yml`) se dispara de cuatro formas, y solo una mira una rama de trabajo:
+
+| Disparador | Alcance | Para qué |
+| --- | --- | --- |
+| `push` | solo `main` | Veredicto del merge recién hecho, que ningún PR cubre. |
+| `pull_request` | cualquier rama | El único run de una rama de trabajo: pushear la rama no dispara nada, abrir o actualizar su PR sí. |
+| `schedule` | `main`, 03:30 UTC | Nocturno con las cuatro suites, incluida la de alemán. |
+| `workflow_dispatch` | la rama que elijas | Manual, con `run_installed_e2e` y `adblock_offline`. |
+
+Un tag no dispara CI: el filtro `branches` de `push` lo excluye, y el instalador de un tag lo publica el workflow `Release`.
+
+Si pusheás una rama **sin PR abierto** no vas a ver ninguna corrida: abrí el PR, o lanzala a mano con `gh workflow run ci.yml --ref <rama>`. Antes, `push` cubría todas las ramas y cada PR corría dos veces el mismo SHA —una por el push y otra por el `pull_request`—, con su build de Windows y su E2E duplicados. El veredicto rápido de una rama se saca en local, que además es más barato que el job `Checks` de CI: `npm run lint` y `npm test` no instalan Chromium ni auditan dependencias, y el job de CI tarda 2 min 13 s en `windows-latest`. Por eso no se reabre `push` a todas las ramas: recuperar ese run costaría un `Checks` duplicado de 2 min en cada PR, a cambio de un ahorro de build que ya está hecho.
+
 ### Verificar el instalador de un run de CI
 
 Cada run publica el `.exe` y un artefacto `terminus-sha256sums-<versión>-run-<n>-windows` con su SHA-256. Descarga los dos desde la pestaña **Summary** del run y, con ellos en la misma carpeta:
@@ -105,7 +120,7 @@ Ese hash corresponde al build de ese run y no tiene por qué coincidir con el de
 3. El workflow `Release` compila el instalador con el mismo `npm run desktop:build` que el CI, escribe `SHA256SUMS.txt` y las notas con `scripts/release-artifacts.cjs` (el helper que también usa el CI), y publica la release con el `.exe` y el `.txt` adjuntos. El asset se llama `Terminus.Setup.<versión>.exe`: GitHub no admite espacios en el nombre de un asset, así que el helper copia el fichero con ese nombre y las notas, los hashes y la descarga usan el mismo. Antes de publicar, el propio job instala ese instalador con `/S`, arranca la app instalada y le pasa la suite Ctrl+F (`scripts/e2e-run.mjs --only ctrl-f`): si el `.exe` que se va a entregar no arranca o el buscador no responde, la release no se crea y el log queda en el artefacto `release-e2e-installed`.
 4. El tag tiene que coincidir con `package.json`: si no, el workflow falla en el primer paso, antes del build. Reintentar el mismo tag reemplaza la release en lugar de duplicarla.
 
-El CI de push solo corre en ramas, así que un tag no compila dos veces. Los artefactos por run (`terminus-installer-…`) siguen existiendo para revisar un build concreto; la release es lo que sobrevive a la retención de artefactos.
+El CI de push solo corre en `main` y no en tags, así que un tag no compila dos veces. Los artefactos por run (`terminus-installer-…`) siguen existiendo para revisar un build concreto; la release es lo que sobrevive a la retención de artefactos.
 
 ## Seguridad
 
