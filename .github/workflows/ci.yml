@@ -37,6 +37,53 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  # Decide si hace falta compilar el instalador. Recoge el patrón de rutas que antes
+  # vivía dentro de `windows`, para que haya una sola definición de «toca la app»:
+  # si el PR solo toca documentación, `windows` se omite y `requerido` sigue verde
+  # porque acepta un job omitido. No es un corte por fork: el fork decide si se
+  # puede instalar, no si hay algo que compilar.
+  cambios:
+    name: Cambios - ¿el PR toca la app?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      app_changed: ${{ steps.detectar.outputs.app_changed }}
+
+    steps:
+      - name: Detectar si el PR toca la app
+        id: detectar
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # Mismo patrón que usaba el gate del E2E instalado.
+          patron='^(src/|electron/|scripts/|assets/|index\.html$|package(-lock)?\.json$|vite\.config\.|vitest\.config\.|tsconfig[^/]*\.json$|electron-builder)'
+          app_changed=true
+          motivo='no es un PR: se compila'
+          if [ "$EVENT_NAME" = 'pull_request' ]; then
+            # Si la consulta falla o no devuelve ficheros, se compila: un verde sin
+            # build es peor que un build de más.
+            if archivos=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[].filename'); then
+              if [ -z "$archivos" ]; then
+                motivo='la consulta no devolvió ficheros: se compila'
+              elif grep -Eq "$patron" <<< "$archivos"; then
+                motivo='el PR toca la app'
+              else
+                app_changed=false
+                motivo='PR sin cambios de app: se omite el build de Windows'
+              fi
+            else
+              motivo='la consulta de ficheros falló: se compila'
+            fi
+          fi
+          echo "app_changed=$app_changed" >> "$GITHUB_OUTPUT"
+          echo "- **Build de Windows:** $motivo" >> "$GITHUB_STEP_SUMMARY"
+          echo "cambios: app_changed=$app_changed ($motivo)"
+
   # Veredicto rápido: lint y unitarios sin esperar al build ni al E2E. Corre en
   # paralelo con `windows`, y `requerido` sigue siendo el check que protege
   # `main`, así que separar no relaja la puerta de merge.
@@ -104,7 +151,10 @@ jobs:
     name: Windows - build, E2E y artefactos
     # Espera al veredicto rápido: si el lint o las pruebas fallan, no se gasta el
     # build ni el E2E. Cuesta el tiempo de `checks` en el camino verde.
-    needs: checks
+    # Se omite cuando `cambios` decidió que el PR no toca la app: un PR de
+    # documentación no empaqueta nada, y el push de `main` vuelve a compilar.
+    needs: [checks, cambios]
+    if: needs.cambios.outputs.app_changed == 'true'
     outputs:
       pr_comment_url: ${{ steps.pr_summary.outputs.comment_url }}
     # El E2E usa SendKeys y necesita escritorio interactivo: lo comprueba el
@@ -136,10 +186,8 @@ jobs:
         id: e2e_gate
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           DISPATCH_E2E: ${{ github.event.inputs.run_installed_e2e }}
           INSTALLED_E2E_VAR: ${{ vars.TERMINUS_RUN_INSTALLED_E2E }}
@@ -155,18 +203,14 @@ jobs:
             $enabled = $env:DISPATCH_E2E -eq 'true'
             $reason = 'dispatch'
           } elseif ($env:EVENT_NAME -eq 'pull_request') {
+            # `cambios` ya omitió los PRs que no tocan la app, así que llegar aquí
+            # significa que hay algo que empaquetar. El fork se sigue cortando
+            # porque su instalador no corre en un runner con acceso a la red local.
             if ($env:PR_HEAD_REPO -ne $env:REPO) {
               $reason = 'PR desde un fork'
             } else {
-              # Solo cuando el PR toca lo que se empaqueta; si la API falla, se ejecuta.
-              $appChanged = $true
-              $pattern = '^(src/|electron/|scripts/|assets/|index\.html$|package(-lock)?\.json$|vite\.config\.|vitest\.config\.|tsconfig[^/]*\.json$|electron-builder)'
-              $files = @(gh api --paginate "repos/$($env:REPO)/pulls/$($env:PR_NUMBER)/files" --jq '.[].filename' 2>$null)
-              if ($LASTEXITCODE -eq 0 -and $files.Count -gt 0) {
-                $appChanged = @($files | Where-Object { $_ -match $pattern }).Count -gt 0
-              }
-              $enabled = $appChanged
-              $reason = if ($appChanged) { 'PR que toca la app' } else { 'PR sin cambios de app' }
+              $enabled = $true
+              $reason = 'PR que toca la app'
             }
           } else {
             $enabled = $env:INSTALLED_E2E_VAR -eq 'true'
@@ -629,11 +673,13 @@ jobs:
           }
 
   # El contexto que exige la protección de `main` se mantiene con este job
-  # agregado: si `checks` o `windows` fallan, este check falla igual que antes
-  # de partir el trabajo, así que la regla de merge no cambia.
+  # agregado: si `checks`, `windows` o `cambios` fallan, este check falla igual que
+  # antes de partir el trabajo, así que la regla de merge no cambia. Un `windows`
+  # omitido (PR de solo documentación) sí se acepta, a propósito; `cambios` también
+  # se mira para que un fallo del detector no se convierta en un verde sin build.
   requerido:
     name: Windows - lint, tests, cobertura y E2E opcional
-    needs: [checks, windows]
+    needs: [checks, cambios, windows]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -645,19 +691,21 @@ jobs:
         shell: bash
         env:
           CHECKS_RESULT: ${{ needs.checks.result }}
+          CAMBIOS_RESULT: ${{ needs.cambios.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
         run: |
           echo "checks: $CHECKS_RESULT"
+          echo "cambios: $CAMBIOS_RESULT"
           echo "windows: $WINDOWS_RESULT"
           fallo=0
-          for resultado in "$CHECKS_RESULT" "$WINDOWS_RESULT"; do
+          for resultado in "$CHECKS_RESULT" "$CAMBIOS_RESULT" "$WINDOWS_RESULT"; do
             case "$resultado" in
               success|skipped) ;;
               *) fallo=1 ;;
             esac
           done
           if [ "$fallo" -ne 0 ]; then
-            echo "::error title=CI en rojo::checks=$CHECKS_RESULT, windows=$WINDOWS_RESULT"
+            echo "::error title=CI en rojo::checks=$CHECKS_RESULT, cambios=$CAMBIOS_RESULT, windows=$WINDOWS_RESULT"
             exit 1
           fi
-          echo "Los dos jobs pasaron."
+          echo "Ningún job falló (un windows omitido es un PR de solo documentación)."
