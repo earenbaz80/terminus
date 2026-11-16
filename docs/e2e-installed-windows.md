@@ -297,15 +297,15 @@ Se reprodujo a voluntad dejando el puntero sobre la opción antes del `Enter` (7
 `scripts/e2e-ctrl-f-inject.mjs` corre la suite de Ctrl+F como hijo y, pasado un retardo desde el arranque, manda una pulsación de verdad con `SendInput` desde otro proceso: no pasa por CDP ni por la marca de la prueba. Sirve para comprobar que la suite clasifica como ajena una tecla que no envió y para reproducir el fallo del paso 2 sin esperar a que ocurra.
 
 ```
-node scripts/e2e-ctrl-f-inject.mjs --delays 3500 --runs 5 --vk 32   # espacio real
-node scripts/e2e-ctrl-f-inject.mjs --delays 3500 --text "x"         # un carácter por unicode
+node scripts/e2e-ctrl-f-inject.mjs                          # 3 500 ms, una corrida
+node scripts/e2e-ctrl-f-inject.mjs --delays 3000,3500 --runs 3
 ```
 
-`--delays` acepta varios separados por coma y `--runs` repite cada uno; cada corrida deja su log en `artifacts/injection/` y el resumen trae el código de salida, el `STEPS`, el `FAIL` y la línea de teclas ajenas. El envío vive en `scripts/lib/win-send-input.ps1` (`SendInput` por P/Invoke) y se llama desde Node con `sendRealKey` (`scripts/lib/e2e-real-keys.mjs`). La ventana destino tiene que estar en primer plano: si no lo está, el script reenfoca `Terminus` antes de enviar y lo informa en su JSON.
+`--delays` acepta varios separados por coma y `--runs` repite cada uno; cada corrida deja su log en `artifacts/injection/` y el resumen trae el código de salida, el `STEPS`, el `FAIL` y la línea de teclas ajenas. El envío vive en `scripts/lib/win-send-input.ps1` (`SendInput` por P/Invoke) y solo manda el espacio, que es lo que se cuela en el fallo. No reenfoca nada: si `Terminus` no está en primer plano se niega a enviar, sale con código 1 y dice qué ventana tenía el foco; en el caso normal informa `sent`, `inputSize` y `error`.
 
 **El `cbSize` importa.** La unión de `INPUT` tiene que declarar `MOUSEINPUT` además de `KEYBDINPUT`, porque `SendInput` compara el `cbSize` con el tamaño de la unión (40 bytes en x64). Declarando solo `KEYBDINPUT` mide 32 y la llamada devuelve 0 con `GetLastWin32Error` 87 (`ERROR_INVALID_PARAMETER`), sin más pista; por eso el script informa `inputSize` y `error` junto a `sent`.
 
-Retardos medidos sobre la app instalada, un espacio por `-Vk 32` contado desde el arranque de la suite:
+Retardos medidos sobre la app instalada, un espacio real contado desde el arranque de la suite:
 
 | retardo | corridas | fallos del paso 2 | registradas como ajenas |
 | --- | --- | --- | --- |
