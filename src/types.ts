@@ -231,6 +231,14 @@ export interface SecurityState {
   auditEventsCount: number;
 }
 
+/** Effective private-network policy reported by the desktop shell. */
+export interface NetworkPolicyState {
+  allowPrivate: boolean;
+  available: boolean;
+  /** False when the API server runs in another process and only a restart applies it. */
+  appliesLive?: boolean;
+}
+
 /** Secure bridge exposed by the Electron preload script (absent in a normal browser tab). */
 export interface TerminusDesktopApi {
   platform: string;
@@ -247,6 +255,9 @@ export interface TerminusDesktopApi {
   /** Ad-blocking switch owned by the Electron main process. */
   getAdblockState?(): Promise<{ enabled: boolean; available: boolean }>;
   setAdblockEnabled?(enabled: boolean): Promise<{ enabled: boolean; available: boolean }>;
+  /** Private-network policy owned by the Electron main process. */
+  getNetworkState?(): Promise<NetworkPolicyState>;
+  setAllowPrivateNetworks?(allowPrivate: boolean): Promise<NetworkPolicyState>;
 }
 
 export interface FrameContextMenuEvent {

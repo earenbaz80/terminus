@@ -2164,6 +2164,17 @@ Tiempos aproximados de ida y vuelta en milisegundos:
   return performWebSearch(rawCommand, ctx);
 }
 
+/**
+ * ¿La pestaña sigue en la búsqueda que lanzó esta respuesta?
+ *
+ * Dos búsquedas seguidas se resuelven por orden de llegada: si la primera
+ * responde después de la segunda, su payload pisaba el de la nueva y la página
+ * mostraba una consulta que ya no era la de la barra de direcciones.
+ */
+function isCurrentSearch(tab: BrowserTab, searchUrl: string, cleanQuery: string): boolean {
+  return tab.url === searchUrl && tab.search?.query === cleanQuery;
+}
+
 async function performWebSearch(
   query: string,
   ctx: CommandContext,
@@ -2193,10 +2204,15 @@ async function performWebSearch(
     };
   }
 
+  // La búsqueda pertenece a la pestaña que la lanzó, no a la que esté activa
+  // cuando responda: si el usuario cambia de pestaña mientras carga, la respuesta
+  // tiene que caer en la suya y no dejar la otra pintada ni esta en `loading`.
+  const searchTabId = currentTab.id;
+
   // Paint the internal page immediately so the address bar and loading state agree.
   ctx.setTabs((prev) =>
     prev.map((t) => {
-      if (t.id !== ctx.activeTabId) return t;
+      if (t.id !== searchTabId) return t;
       const appendToHistory = !historyOverride && t.url !== searchUrl;
       const nextHistory = historyOverride
         ? t.history
@@ -2277,7 +2293,7 @@ async function performWebSearch(
 
     ctx.setTabs((prev) =>
       prev.map((t) =>
-        t.id === ctx.activeTabId
+        t.id === searchTabId && isCurrentSearch(t, searchUrl, cleanQuery)
           ? {
               ...t,
               isLoading: false,
@@ -2324,7 +2340,7 @@ async function performWebSearch(
 
     ctx.setTabs((prev) =>
       prev.map((t) =>
-        t.id === ctx.activeTabId
+        t.id === searchTabId && isCurrentSearch(t, searchUrl, cleanQuery)
           ? {
               ...t,
               isLoading: false,

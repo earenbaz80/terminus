@@ -30,6 +30,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { suiteSteps } from './e2e-suites.mjs';
+import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
+import {
+  CLEAR_TEST_KEYS,
+  READ_STRAY_KEYS,
+  SENT_BY_TEST,
+  STRAY_LIST,
+  markTestKeys,
+  strayKeysLine,
+} from './lib/e2e-stray-keys.mjs';
 import {
   assertInstalledMatchesBuild,
   captureFailureScreenshot,
@@ -61,6 +70,12 @@ const e2eLocale = (process.env.TERMINUS_E2E_LOCALE ?? '').trim();
 const START_FORM = 'form[role="search"]';
 // Ancla propia del campo de búsqueda del inicio: no depende de su posición ni del idioma.
 const START_INPUT = 'input[data-e2e="start-search-input"]';
+// Cajas donde se escribe durante la corrida; `where` de una tecla ajena dice en cuál cayó.
+const STRAY_FIELDS = [
+  ['inicio', START_INPUT],
+  ['barra', ADDRESS_SELECTOR],
+  ['resultados', `${START_FORM} input[type="search"]`],
+];
 // Ancla de las chips recientes: distingue una búsqueda recordada de una sugerencia fija.
 const RECENT_CHIP = '[data-e2e="recent-search"]';
 // El grupo de chips y su etiqueta: el paso 6 comprueba el recorte en ventana estrecha.
@@ -148,9 +163,112 @@ const ROOT_STATE_EXPRESSION = `(() => {
 
 /** Presses Enter through CDP so the renderer handles it as a real key press. */
 async function pressEnter(client) {
+  // Marca la ventana en la que las teclas que lleguen son las que envía la prueba.
+  await client.evaluate(markTestKeys()).catch(() => undefined);
   const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
   await client.send('Input.dispatchKeyEvent', { type: 'keyDown', ...key, text: '\r', unmodifiedText: '\r' });
   await client.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+  await client.evaluate(CLEAR_TEST_KEYS).catch(() => undefined);
+}
+
+/**
+ * Teclas que no envió la prueba en el campo del inicio. La suite marca cada tecla que
+ * envía y lo que llega fuera de esa marca queda registrado: un espacio ajeno en el campo
+ * explica un «un carácter» sin tener que adivinar con el valor final.
+ */
+const STRAY_KEYS_EXPRESSION = `(() => {
+  if (window.__e2eStrayTrace) return true;
+  window.__e2eStrayTrace = true;
+  document.addEventListener('keydown', (event) => {
+    if (${SENT_BY_TEST}) return;
+    const hit = ${JSON.stringify(STRAY_FIELDS)}
+      .map(([name, selector]) => [name, document.querySelector(selector)])
+      .find(([, field]) => field && field === event.target) ?? null;
+    const list = (window.${STRAY_LIST} = window.${STRAY_LIST} || []);
+    list.push({
+      where: hit ? hit[0] : 'documento',
+      sentByTest: false,
+      key: event.key ?? null,
+      code: event.code ?? null,
+      keyCode: event.keyCode ?? null,
+      visibility: document.visibilityState,
+      hasFocus: document.hasFocus(),
+      value: hit ? hit[1].value : null,
+    });
+    if (list.length > 20) list.shift();
+  }, true);
+  return true;
+})()`;
+
+/** Lee las teclas ajenas y las vacía en la página: se acumulan aquí para sobrevivir a una recarga. */
+const strayKeys = [];
+async function collectStrayKeys(client) {
+  const found = await client
+    .evaluate(READ_STRAY_KEYS)
+    .catch(() => null);
+  if (Array.isArray(found)) strayKeys.push(...found);
+  return strayKeys;
+}
+
+/** Lee el renderer, imprime lo que haya y vacía lo acumulado: una tecla no se repite. */
+async function logStrayKeys(client, label) {
+  await collectStrayKeys(client);
+  console.log(strayKeysLine(LOG, label, strayKeys.splice(0)));
+}
+
+/**
+ * Traza del Enter en la barra de direcciones: qué sugerencia estaba resaltada al
+ * pulsarlo. La app ejecuta la sugerencia resaltada en vez del comando escrito
+ * (`suggestionIndex >= 0`), y también la resalta al pasar el ratón por encima, así que
+ * un clic previo puede dejarla seleccionada sin que nadie pulse una flecha. Solo lee el
+ * DOM: no cambia nada de la app ni de las condiciones de ningún paso.
+ */
+const ENTER_TRACE_EXPRESSION = `(() => {
+  const input = document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)});
+  if (!input) return false;
+  if (window.__e2eEnterTrace) return true;
+  window.__e2eEnterTrace = [];
+  window.__e2ePointer = null;
+  document.addEventListener('mousemove', (event) => {
+    window.__e2ePointer = { x: event.clientX, y: event.clientY };
+  }, true);
+  const read = () => {
+    const box = document.getElementById('terminus-address-suggestions');
+    const options = box ? [...box.querySelectorAll('[role="option"]')] : [];
+    const selected = options.filter((option) => option.getAttribute('aria-selected') === 'true');
+    return {
+      options: options.length,
+      selected: selected.map((option) => (option.textContent ?? '').trim().slice(0, 60)),
+      selectedIndex: options.indexOf(selected[0]),
+    };
+  };
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    const pointer = window.__e2ePointer;
+    const under = pointer ? document.elementFromPoint(pointer.x, pointer.y) : null;
+    const box = document.getElementById('terminus-address-suggestions');
+    window.__e2eEnterTrace.push({
+      at: Math.round(performance.now()),
+      value: input.value,
+      isTrusted: event.isTrusted,
+      ...read(),
+      pointerOverList: Boolean(box && under && box.contains(under)),
+    });
+  }, true);
+  return true;
+})()`;
+
+/** Instala la traza del Enter; la llama cada comando porque el reload del paso 3 la borra. */
+async function installEnterTrace(client) {
+  const installed = await client.evaluate(ENTER_TRACE_EXPRESSION).catch(() => false);
+  assert.equal(installed, true, 'No se pudo instalar la traza del Enter en la barra.');
+}
+
+/** Últimos Enter pulsados en la barra, con la sugerencia que estaba resaltada. */
+async function readEnterTrace(client) {
+  return client
+    .evaluate('window.__e2eEnterTrace ? window.__e2eEnterTrace.slice(-3) : null')
+    .catch(() => null);
 }
 
 /** Runs a terminal command through the address bar of the browser surface. */
@@ -175,30 +293,60 @@ async function runCommand(client, command) {
   );
   // Deja que React aplique el valor antes de enviar Enter.
   await sleep(200);
+  await installEnterTrace(client);
   await pressEnter(client);
 }
 
+// Consulta de la carrera de pestañas: tiene que devolver página de resultados, pero
+// el paso no exige un número de resultados, solo que el payload caiga donde toca.
+const IN_FLIGHT_QUERY = 'javascript';
+
 /**
- * Espera la página de resultados de `query`.
+ * Estado de la página de resultados visible: consulta del campo, dirección y si la
+ * sección que envuelve al formulario sigue ocupada. En el inicio esa sección no
+ * existe, así que `busy` sale nulo.
+ */
+const RESULTS_STATE_EXPRESSION = `(() => {
+  const form = document.querySelector(${JSON.stringify(START_FORM)});
+  const input = form?.querySelector('input[type="search"]') ?? null;
+  const busy = form?.closest('section[aria-busy]')?.getAttribute('aria-busy') ?? null;
+  return {
+    onStart: Boolean(document.querySelector(${JSON.stringify(START_INPUT)})),
+    query: input?.value ?? null,
+    busy,
+    address: document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)})?.value ?? null,
+  };
+})()`;
+
+/** Pulsa la pestaña `index` (desde 1) en la tira, sin pasar por la barra de direcciones. */
+async function clickTab(client, index) {
+  const clicked = await client.evaluate(`(() => {
+    const strip = [...document.querySelectorAll('[role="tab"]')];
+    const tab = strip[${index} - 1];
+    if (!tab) return false;
+    tab.click();
+    return true;
+  })()`);
+  assert.equal(clicked, true, `No se pudo pulsar la pestaña ${index}.`);
+}
+
+/**
+ * Espera la página de resultados de `query`, ya asentada.
  *
  * Se comprueba por el campo de la página de resultados y por la dirección, no por el
- * texto visible: sirve igual en cualquier idioma.
+ * texto visible: sirve igual en cualquier idioma. Además exige `aria-busy="false"`
+ * en la sección que envuelve al formulario, que es como la página dice que el payload
+ * de esta consulta ya está aplicado; con solo la dirección y el texto, el paso se daba
+ * por bueno con la petición en vuelo y la siguiente búsqueda se lanzaba encima.
  */
 async function waitForSearchResults(client, query, label) {
   return waitForExpression(
     client,
-    `(() => {
-      const form = document.querySelector(${JSON.stringify(START_FORM)});
-      const input = form?.querySelector('input[type="search"]') ?? null;
-      return {
-        onStart: Boolean(document.querySelector(${JSON.stringify(START_INPUT)})),
-        query: input?.value ?? null,
-        address: document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)})?.value ?? null,
-      };
-    })()`,
+    RESULTS_STATE_EXPRESSION,
     (state) =>
       !state.onStart &&
       state.query === query &&
+      state.busy === 'false' &&
       /\bterminus:\/\/search\b/.test(state.address ?? ''),
     label,
     25000,
@@ -305,6 +453,51 @@ async function applyE2ELocale(client) {
   );
 }
 
+/**
+ * Devuelve el layout ancho después de la ventana estrecha del paso 6.
+ *
+ * `clearDeviceMetricsOverride` no siempre surte efecto: con la interfaz en alemán
+ * el viewport se queda en 433 px y el paso 7 no ve las chips recortadas. Si el
+ * layout no vuelve, se fija el tamaño real que tenía la ventana antes de
+ * encogerla, así que el estado queda igual que sin emulación y los pasos
+ * siguientes no corren en un viewport inventado.
+ *
+ * El repintado no es inmediato aunque el ancho sea el correcto, y lo que se
+ * exige no es solo el ancho: la etiqueta del grupo y las dos recientes tienen que
+ * verse, que es lo que necesita el paso 7 para pulsar la chip correcta.
+ */
+async function restoreWideLayout(client, wide) {
+  const expression = `(() => {
+    const label = document.querySelector(${JSON.stringify(START_CHIPS_LABEL)});
+    const recents = [...document.querySelectorAll(${JSON.stringify(RECENT_CHIP)})];
+    return {
+      width: window.innerWidth,
+      labelVisible: Boolean(label) && label.getClientRects().length > 0,
+      visibleRecents: recents
+        .filter((chip) => chip.getClientRects().length > 0)
+        .map((chip) => (chip.textContent ?? '').trim()),
+    };
+  })()`;
+  const restored = (state) =>
+    state.width === wide.width &&
+    state.labelVisible &&
+    state.visibleRecents.includes(SEARCH_QUERY) &&
+    state.visibleRecents.includes(NARROW_QUERY);
+  const label = `el layout ancho de vuelta (${wide.width} px, etiqueta del grupo y las dos recientes visibles)`;
+
+  try {
+    return await waitForExpression(client, expression, restored, label, 3000);
+  } catch {
+    // Se deja dicho: si este aviso sale en todas las corridas, limpiar la emulación
+    // no está funcionando y el que sostiene el layout es este override.
+    console.log(
+      `${LOG} Limpiar la emulación no devolvió la ventana; se fija su tamaño real (${wide.width}×${wide.height}).`,
+    );
+    await client.send('Emulation.setDeviceMetricsOverride', wide);
+    return waitForExpression(client, expression, restored, label, 7000);
+  }
+}
+
 async function main() {
   assert.ok(
     process.platform === 'win32',
@@ -339,6 +532,9 @@ async function main() {
     },
   });
   const cdp = app.client;
+  // Desde el arranque, para que la línea final cubra toda la corrida y no solo los pasos
+  // del inicio. Es idempotente y se repite tras cada recarga, que borra el renderer.
+  await cdp.evaluate(STRAY_KEYS_EXPRESSION).catch(() => undefined);
 
   if (e2eLocale) await applyE2ELocale(cdp);
 
@@ -401,6 +597,7 @@ async function main() {
     `el tema ${chosen.id} tras recargar la app`,
     30000,
   );
+  await cdp.evaluate(STRAY_KEYS_EXPRESSION).catch(() => undefined);
 
   const reopened = await openSettingsMenu(cdp);
   assert.equal(reopened.theme, chosen.id, 'El menú no refleja el tema guardado tras recargar.');
@@ -431,6 +628,22 @@ async function main() {
   assert.equal(startPage.formButtons, 1, 'El formulario de inicio tiene botones de más: ¿volvió el botón intermedio?');
   assert.equal(startPage.submitButtons, 1, 'El único botón del formulario de inicio no es el de envío.');
 
+  // Si el envío se pierde, bastan dos banderas: si el Enter llegó al campo y si el
+  // formulario se envió. Separa «la tecla fue a otro sitio» de «el formulario no
+  // reaccionó», que es toda la clasificación que hace falta aquí.
+  await cdp.evaluate(`(() => {
+    const input = document.querySelector(${JSON.stringify(START_INPUT)});
+    window.__e2eFieldEvents = { enterOnField: false, submit: false, valueAtEnter: null, hasFocusAtEnter: null };
+    input?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      window.__e2eFieldEvents.enterOnField = true;
+      window.__e2eFieldEvents.valueAtEnter = input.value;
+      window.__e2eFieldEvents.hasFocusAtEnter = document.hasFocus();
+    });
+    document.addEventListener('submit', () => { window.__e2eFieldEvents.submit = true; }, true);
+    return true;
+  })()`);
+
   const typed = await cdp.evaluate(`(() => {
     const form = document.querySelector(${JSON.stringify(START_FORM)});
     const input = form?.querySelector(${JSON.stringify(START_INPUT)});
@@ -442,7 +655,21 @@ async function main() {
     return true;
   })()`);
   assert.equal(typed, true, 'No se pudo escribir en el formulario de inicio.');
-  await sleep(200);
+  // El submit lee el estado de React, no el DOM: se espera a que el propio
+  // formulario lo refleje (botón de envío habilitado) antes de pulsar Enter, en
+  // lugar de confiar en un retardo fijo.
+  await waitForExpression(
+    cdp,
+    `(() => {
+      const form = document.querySelector(${JSON.stringify(START_FORM)});
+      const input = form?.querySelector(${JSON.stringify(START_INPUT)});
+      const submit = form?.querySelector('button[type="submit"]');
+      return { value: input?.value ?? null, enabled: Boolean(submit) && !submit.disabled };
+    })()`,
+    (state) => state.value === SEARCH_QUERY && state.enabled,
+    'la consulta del inicio aplicada en el formulario',
+    5000,
+  );
   await pressEnter(cdp);
 
   const searched = await waitForExpression(
@@ -469,7 +696,13 @@ async function main() {
       state.commandLogged,
     'la búsqueda del inicio en un solo paso',
     25000,
-  );
+  ).catch(async (error) => {
+    const events = await cdp.evaluate('window.__e2eFieldEvents').catch(() => null);
+    const probe = await cdp.evaluate(inputProbeExpression(ADDRESS_SELECTOR)).catch(() => null);
+    console.log(`${LOG} Eventos del campo del inicio: ${JSON.stringify(events)}`);
+    console.log(`${LOG} Foco y barra tras el Enter: ${JSON.stringify(probe)}`);
+    throw error;
+  });
 
   pass(`búsqueda del inicio en un paso («search ${SEARCH_QUERY}» registrado, resultados en ${searched.address}).`);
   // 5. La búsqueda lanzada arriba queda como chip reciente del inicio.
@@ -509,7 +742,22 @@ async function main() {
     (focused) => focused === true,
     'el campo del inicio enfocado al repetir "home"',
     20000,
-  );
+  ).catch(async (error) => {
+    const probe = await cdp
+      .evaluate(`(() => {
+        const input = document.querySelector(${JSON.stringify(START_INPUT)});
+        const active = document.activeElement;
+        return {
+          hasFocus: document.hasFocus(),
+          startInput: Boolean(input),
+          startInputFocused: Boolean(input) && active === input,
+          activeElement: (active?.tagName ?? '') + (active?.getAttribute('aria-label') ? '[' + active.getAttribute('aria-label') + ']' : ''),
+        };
+      })()`)
+      .catch(() => null);
+    console.log(`${LOG} Foco al repetir «home»: ${JSON.stringify(probe)}`);
+    throw error;
+  });
 
   pass(
     `la búsqueda del inicio queda como chip reciente (${recent.chips.length} guardada(s), ancla ${RECENT_CHIP}) y el campo recupera el foco al volver con "home".`,
@@ -550,6 +798,14 @@ async function main() {
     'las dos búsquedas recientes en el inicio',
     20000,
   );
+
+  // Tamaño real de la ventana antes de encogerla: es el que se restaura después.
+  const wide = await cdp.evaluate(`(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+    deviceScaleFactor: window.devicePixelRatio,
+    mobile: false,
+  }))()`);
 
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width: NARROW_WIDTH,
@@ -604,6 +860,7 @@ async function main() {
   assert.equal(hiddenRecent?.text, SEARCH_QUERY, 'La reciente oculta no es la anterior.');
 
   await cdp.send('Emulation.clearDeviceMetricsOverride');
+  await restoreWideLayout(cdp, wide);
 
   pass(
     `ventana de ${NARROW_WIDTH} px: cartel entero (${narrow.fontSize.toFixed(2)} px, sin desbordar su caja) y solo la reciente más nueva («${NARROW_QUERY}») visible, con la etiqueta del grupo oculta.`,
@@ -697,15 +954,21 @@ async function main() {
     cdp,
     `(() => {
       const input = document.querySelector(${JSON.stringify(START_INPUT)});
+      const probe = ${inputProbeExpression(ADDRESS_SELECTOR)};
       return {
+        ...probe,
         onStart: Boolean(input),
         focused: Boolean(input) && document.activeElement === input,
+        field: input ? { value: input.value, selStart: input.selectionStart } : null,
       };
     })()`,
     (state) => state.onStart && state.focused,
     'el inicio con el campo enfocado tras «inicio»',
     20000,
-  );
+  ).catch(async (error) => {
+    console.log(`${LOG} Enter tras «inicio»: ${JSON.stringify(await readEnterTrace(cdp))}`);
+    throw error;
+  });
 
   pass('el sinónimo «inicio» vuelve al inicio con el campo enfocado, como «home».');
 
@@ -743,7 +1006,25 @@ async function main() {
       state.dom.onStart,
     'la segunda pestaña abierta, activa y en el inicio',
     20000,
-  );
+  ).catch(async (error) => {
+    const fingerprint = await cdp
+      .evaluate(`(() => {
+        let history = [];
+        try {
+          history = JSON.parse(localStorage.getItem(${JSON.stringify(HISTORY_KEY)}) ?? '[]');
+        } catch {}
+        return {
+          lastCommands: Array.isArray(history) ? history.slice(-2) : [],
+          dispatched: Array.isArray(history) && history.includes('tab new web'),
+          address: document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)})?.value ?? null,
+          documentFocused: document.hasFocus(),
+        };
+      })()`)
+      .catch(() => null);
+    console.log(`${LOG} Huella de «tab new web»: ${JSON.stringify(fingerprint)}`);
+    console.log(`${LOG} Enter tras «tab new web»: ${JSON.stringify(await readEnterTrace(cdp))}`);
+    throw error;
+  });
   assert.deepEqual(
     opened.tabs[0],
     firstTab,
@@ -860,6 +1141,7 @@ async function main() {
   // 11. Recargar el renderer: las dos pestañas vuelven con su URL, su historial y la activa.
   const beforeReload = await cdp.evaluate(SESSION_STATE_EXPRESSION);
   await cdp.send('Page.enable');
+  await collectStrayKeys(cdp);
   await cdp.send('Page.reload', { ignoreCache: false });
 
   const restoredTabs = await waitForExpression(
@@ -885,6 +1167,8 @@ async function main() {
     'las dos pestañas con su URL e historial tras recargar el renderer',
     30000,
   );
+  await cdp.evaluate(STRAY_KEYS_EXPRESSION).catch(() => undefined);
+
   assert.equal(
     restoredTabs.tabs[1].url,
     secondResult.address,
@@ -894,6 +1178,135 @@ async function main() {
   pass(
     `tras recargar, las 2 pestañas vuelven con su URL e historial (${restoredTabs.tabs[0].history.length} y ${restoredTabs.tabs[1].history.length} entradas) y la primera sigue activa.`,
   );
+
+  // 12. Búsqueda en vuelo y cambio de pestaña: el payload cae solo en la pestaña que
+  //     la lanzó y ninguna se queda cargando. Antes la respuesta se aplicaba a la
+  //     pestaña activa al resolver, así que cambiarse de pestaña la perdía. La
+  //     respuesta se retrasa con la red emulada para que la carrera no dependa de lo
+  //     que tarde el proveedor: la petición sigue en vuelo al cambiar de pestaña.
+  await cdp.send('Network.enable');
+  const throttle = (latency) =>
+    cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency,
+      downloadThroughput: -1,
+      uploadThroughput: -1,
+    });
+  await throttle(2000);
+
+  let race = null;
+  try {
+    for (let attempt = 1; attempt <= 3 && !race; attempt += 1) {
+      // Siempre desde el mismo sitio: la primera pestaña en el inicio.
+      await clickTab(cdp, 1);
+      await runCommand(cdp, 'home');
+      await waitForExpression(
+        cdp,
+        RESULTS_STATE_EXPRESSION,
+        (state) => state.onStart,
+        'el inicio de la primera pestaña antes de la carrera',
+        15000,
+      );
+
+      const query = attempt === 1 ? IN_FLIGHT_QUERY : `${IN_FLIGHT_QUERY} ${attempt}`;
+      // La consulta se escribe y se envía en el formulario del inicio: después de
+      // `home` la barra y el campo del inicio se pelean el foco, y un Enter acabaría
+      // en el sitio equivocado. El clic en el botón no depende del foco.
+      const typed = await typeStartQuery(cdp, query);
+      assert.equal(typed, true, 'No se pudo escribir la consulta de la carrera en el inicio.');
+      await waitForExpression(
+        cdp,
+        `(() => {
+          const form = document.querySelector(${JSON.stringify(START_FORM)});
+          const input = form?.querySelector(${JSON.stringify(START_INPUT)});
+          const submit = form?.querySelector('button[type="submit"]');
+          return { value: input?.value ?? null, enabled: Boolean(submit) && !submit.disabled };
+        })()`,
+        (state) => state.value === query && state.enabled,
+        'la consulta de la carrera aplicada en el inicio',
+        5000,
+      );
+      const submitted = await cdp.evaluate(`(() => {
+        const form = document.querySelector(${JSON.stringify(START_FORM)});
+        const submit = form?.querySelector('button[type="submit"]');
+        if (!submit || submit.disabled) return false;
+        submit.click();
+        return true;
+      })()`);
+      assert.equal(
+        submitted,
+        true,
+        'No se pudo enviar la consulta de la carrera desde el inicio.',
+      );
+
+      // La página de resultados se pinta al momento (solo cambia el estado local), con
+      // la petición todavía en vuelo; el cambio va por la tira de pestañas, no por la
+      // barra, que llegaría tarde.
+      const inFlight = await waitForExpression(
+        cdp,
+        RESULTS_STATE_EXPRESSION,
+        (state) => !state.onStart && state.query === query,
+        'la página de resultados antes de cambiar de pestaña',
+        5000,
+      );
+      await clickTab(cdp, 2);
+      if (inFlight.busy !== 'true') continue;
+
+      // La segunda pestaña queda activa mientras la primera responde. Si la respuesta
+      // se aplicara a la pestaña activa, aquí aparecería la consulta nueva. En vez de
+      // dormir 4 s fijos se espera al fetch de la pestaña 1: el renderer es el mismo
+      // documento, así que su entrada de recurso aparece aquí, y cuando tiene
+      // `responseEnd` el payload ya viajó a su pestaña.
+      await waitForExpression(
+        cdp,
+        `(() => {
+          const name = '/api/search?q=' + ${JSON.stringify(encodeURIComponent(query))};
+          const entries = performance.getEntriesByType('resource')
+            .filter((entry) => entry.name.includes(name));
+          return { requests: entries.length, done: entries.some((entry) => entry.responseEnd > 0) };
+        })()`,
+        (state) => state.done,
+        'la respuesta de la búsqueda en vuelo',
+        15000,
+      );
+      // Un frame de margen para que React aplique el payload antes de mirar la otra.
+      await sleep(120);
+      const otherTab = await waitForExpression(
+        cdp,
+        RESULTS_STATE_EXPRESSION,
+        (state) => state.query === SECOND_QUERY && state.busy === 'false',
+        'la segunda pestaña intacta mientras la primera responde',
+        10000,
+      );
+      assert.notEqual(
+        otherTab.query,
+        query,
+        'La respuesta de la búsqueda se aplicó a la pestaña activa en vez de a la que la lanzó.',
+      );
+
+      await clickTab(cdp, 1);
+      const origin = await waitForExpression(
+        cdp,
+        RESULTS_STATE_EXPRESSION,
+        (state) => state.query === query && state.busy === 'false',
+        'la búsqueda resuelta en la pestaña que la lanzó',
+        25000,
+      );
+      assert.equal(origin.busy, 'false', 'La pestaña que lanzó la búsqueda se quedó cargando.');
+      race = { query, otherTab, origin, attempt };
+    }
+  } finally {
+    await throttle(0).catch(() => undefined);
+  }
+
+  assert.ok(race, 'No se pudo pillar una búsqueda en vuelo al cambiar de pestaña en 3 intentos.');
+  pass(
+    `búsqueda «${race.query}» en vuelo (intento ${race.attempt}, red emulada) y salto a la pestaña 2: la 2 sigue en «${race.otherTab.query}» y la 1 resuelve la suya, sin quedarse cargando.`,
+  );
+
+  // El override de respaldo deja la ventana con su tamaño real, pero sigue siendo
+  // una emulación: se intenta quitar al final para no cerrar con ella puesta.
+  await cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined);
 
   assert.equal(
     stepsRun,
@@ -918,6 +1331,9 @@ try {
   await captureFailureScreenshot(app?.client, 'ui');
   process.exitCode = 1;
 } finally {
+  // Una sola línea para la corrida entera, en verde o en fallo: el FAIL de arriba dice
+  // en qué paso fue. La recarga del paso 11 borra el renderer, por eso se lee antes.
+  if (app?.client) await logStrayKeys(app.client, 'fin de la corrida').catch(() => undefined);
   // El paso del E2E en CI lee esta línea para comparar con el total esperado.
   console.log(LOG + ' STEPS: ' + stepsRun + '/' + TOTAL_STEPS);
   await app?.cleanup();

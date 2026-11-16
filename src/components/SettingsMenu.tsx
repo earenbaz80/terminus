@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Blocks, Languages, Menu, ShieldCheck, Volume2, VolumeX, X } from 'lucide-react';
+import { Blocks, Languages, Menu, Network, ShieldCheck, Volume2, VolumeX, X } from 'lucide-react';
 import { ThemeConfig, ThemeId } from '../types';
 import { THEMES } from '../utils/themes';
 import { themeName } from '../i18n/themes';
@@ -8,6 +8,11 @@ import { LOCALES } from '../i18n/locales';
 import { useI18n } from '../i18n';
 import { LockSettings } from './LockSettings';
 import { applyAdblockEnabled, readAdblockState, AdblockState } from '../utils/adblockPreference';
+import {
+  applyAllowPrivateNetworks,
+  readNetworkState,
+  NetworkState,
+} from '../utils/networkPreference';
 
 interface SettingsMenuProps {
   theme: ThemeConfig;
@@ -44,6 +49,12 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
   const [customWavName, setCustomWavName] = useState<string | null>(() => soundEffects.getCustomSoundName());
   const [adblock, setAdblock] = useState<AdblockState>({ enabled: true, available: false });
   const [adblockBusy, setAdblockBusy] = useState(false);
+  const [network, setNetwork] = useState<NetworkState>({
+    allowPrivate: false,
+    available: false,
+    appliesLive: false,
+  });
+  const [networkBusy, setNetworkBusy] = useState(false);
   const wavInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -51,6 +62,9 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
     let active = true;
     void readAdblockState().then((state) => {
       if (active) setAdblock(state);
+    });
+    void readNetworkState().then((state) => {
+      if (active) setNetwork(state);
     });
     return () => {
       active = false;
@@ -65,6 +79,16 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
     const state = await applyAdblockEnabled(!adblock.enabled);
     setAdblock(state);
     setAdblockBusy(false);
+  };
+
+  const togglePrivateNetworks = async () => {
+    if (networkBusy || !network.available) return;
+    soundEffects.playKeyClick();
+    setNetworkBusy(true);
+    setNetwork((previous) => ({ ...previous, allowPrivate: !previous.allowPrivate }));
+    const state = await applyAllowPrivateNetworks(!network.allowPrivate);
+    setNetwork(state);
+    setNetworkBusy(false);
   };
 
   const sectionTitle = (label: string) => (
@@ -298,6 +322,39 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
               <p className="text-[9px] leading-4 opacity-45">
                 {adblock.available ? t('settings.adblockHint') : t('settings.adblockDesktopOnly')}
               </p>
+            </section>
+
+            <section
+              aria-label={t('settings.network')}
+              className="mb-3 border-t pt-2"
+              style={{ borderColor: theme.border }}
+            >
+              {sectionTitle(t('settings.network'))}
+              <button
+                type="button"
+                onClick={() => void togglePrivateNetworks()}
+                disabled={!network.available || networkBusy}
+                aria-pressed={network.allowPrivate}
+                className="mb-1 flex w-full items-center justify-between border px-2 py-1.5 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ borderColor: network.allowPrivate ? theme.accent : theme.border }}
+              >
+                <span className="flex items-center gap-1.5">
+                  <Network className="h-3 w-3 shrink-0" style={{ color: theme.accent }} />
+                  {t('settings.allowPrivate')}
+                </span>
+                <span style={{ color: network.allowPrivate ? theme.accent : theme.text }}>
+                  {network.allowPrivate ? t('settings.on') : t('settings.off')}
+                </span>
+              </button>
+              <p className="text-[9px] leading-4 opacity-45">
+                {network.allowPrivate ? t('settings.allowPrivateHint') : t('settings.networkHint')}
+              </p>
+              {!network.available && (
+                <p className="mt-1 text-[9px] leading-4 opacity-45">{t('settings.networkDesktopOnly')}</p>
+              )}
+              {network.available && !network.appliesLive && (
+                <p className="mt-1 text-[9px] leading-4 opacity-45">{t('settings.networkRestart')}</p>
+              )}
             </section>
 
             <section
