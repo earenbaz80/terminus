@@ -294,14 +294,16 @@ Se reprodujo a voluntad dejando el puntero sobre la opción antes del `Enter` (7
 
 ### Banco de inyección real para el flake de «un carácter»
 
-`scripts/e2e-ctrl-f-inject.mjs` corre la suite de Ctrl+F como hijo y, pasado un retardo desde el arranque, manda una pulsación de verdad con `SendInput` desde otro proceso: no pasa por CDP ni por la marca de la prueba. Sirve para comprobar que la suite clasifica como ajena una tecla que no envió y para reproducir el fallo del paso 2 sin esperar a que ocurra.
+`scripts/e2e-ctrl-f-inject.mjs` corre una suite de la app instalada como hijo (`--suite`; por defecto, la de Ctrl+F) y manda pulsaciones de verdad con `SendInput` desde otro proceso —no pasa por CDP ni por la marca de la prueba—, pasado un retardo desde el arranque (`--delays`) o al ver una línea de la suite (`--on`). Sirve para comprobar que la suite clasifica como ajena una tecla que no envió y para reproducir el fallo del paso 2 sin esperar a que ocurra.
 
 ```
 node scripts/e2e-ctrl-f-inject.mjs                          # 3 500 ms, una corrida
 node scripts/e2e-ctrl-f-inject.mjs --delays 3000,3500 --runs 3
+node scripts/e2e-ctrl-f-inject.mjs --vk 84                  # la letra «t» (KeyT)
+node scripts/e2e-ctrl-f-inject.mjs --suite scripts/e2e-installed-ui.mjs --on 'PASS 8/12' --vk 84
 ```
 
-`--delays` acepta varios separados por coma y `--runs` repite cada uno; cada corrida deja su log en `artifacts/injection/` y el resumen trae el código de salida, el `STEPS`, el `FAIL` y la línea de teclas ajenas. El envío vive en `scripts/lib/win-send-input.ps1` (`SendInput` por P/Invoke) y solo manda el espacio, que es lo que se cuela en el fallo. No reenfoca nada: si `Terminus` no está en primer plano se niega a enviar, sale con código 1 y dice qué ventana tenía el foco; en el caso normal informa `sent`, `inputSize` y `error`.
+`--delays` acepta varios separados por coma y `--runs` repite cada uno; cada corrida deja su log en `artifacts/injection/` y el resumen trae el código de salida, el `STEPS`, el `FAIL` y la línea de teclas ajenas. `--on` y `--delays` se excluyen: o dispara el reloj o dispara una línea de la suite, y si el marcador no aparece la corrida lo dice en el resumen en vez de quedarse sin envío en silencio. El envío vive en `scripts/lib/win-send-input.ps1` (`SendInput` por P/Invoke) y manda las teclas de `--vk` en orden: `32` = espacio por defecto, `84` = `KeyT` (la variante del `…115396t`), `9` = Tab. No reenfoca nada: si `Terminus` no está en primer plano se niega a enviar, sale con código 1 y dice qué ventana tenía el foco; en el caso normal informa `sent`, `inputSize` y `error`.
 
 **El `cbSize` importa.** La unión de `INPUT` tiene que declarar `MOUSEINPUT` además de `KEYBDINPUT`, porque `SendInput` compara el `cbSize` con el tamaño de la unión (40 bytes en x64). Declarando solo `KEYBDINPUT` mide 32 y la llamada devuelve 0 con `GetLastWin32Error` 87 (`ERROR_INVALID_PARAMETER`), sin más pista; por eso el script informa `inputSize` y `error` junto a `sent`.
 
@@ -316,6 +318,18 @@ Retardos medidos sobre la app instalada, un espacio real contado desde el arranq
 | 4 500 ms | 1 | 1 | 1 |
 
 Hasta 3 s la tecla llega antes de que el campo del buscador tenga el foco (`PASS 1/5` tarda 3,0 s). Desde 3,5 s el campo amanece con el espacio y el `FAIL` es el histórico (`El buscador perdió el texto «Fixture»: ahora tiene «Fixture »`), con la pulsación en `Teclas no enviadas por la prueba (al perder el texto)` como `{"code":"Space","keyCode":32,"sentByTest":false,"where":"campo"}`. Sin inyección, la misma app cerró `5/5` con lista `[]` en 2 de 2 corridas.
+
+Con `--vk 84` (`KeyT`) el paso 2 falla igual, en 3 de 3 corridas: «Fixture» → «Fixturet», con `{"key":"t","code":"KeyT","keyCode":84,"sentByTest":false,"where":"campo"}` en la línea de teclas ajenas.
+
+### Detección de teclas ajenas en las tres cajas
+
+La detección de entrada del sistema de la suite `ui` (`where` de cada tecla ajena) se validó con inyección real `SendInput`, no solo con CDP:
+
+- inicio: `--suite scripts/e2e-installed-ui.mjs --on "PASS 8/12" --vk 84 --runs 3` → 3 de 3 registran `inicio`/`KeyT`/84 con `sentByTest: false`, y la suite cierra 12/12 sin `FAIL`.
+- barra: `--suite scripts/e2e-installed-ui.mjs --vk 84 --delays 2000,3000,4000` → 4 de 4 (con 7000) registran `barra`/`KeyT`/84 con `sentByTest: false`.
+- resultados: `--suite scripts/e2e-installed-ui.mjs --vk 9,84 --delays 2800,3100,3300` → 3 de 3, con el Tab previo en `documento` y la letra en `resultados`/`KeyT`/84; el campo conserva la consulta de los resultados.
+
+El campo de resultados no recibe foco en ningún paso de la suite, así que llegar a él exige un Tab real delante. Con retardos fijos el arranque de Electron mueve la ventana de foco (5200 ms ya cae en `documento`); `--on` fue estable en `PASS 8/12` para el inicio, pero con `--on "PASS 1/12"` solo 2 de 3 corridas registraron la tecla, así que la barra se cubre por retardo.
 
 ## Lista de comprobación
 
