@@ -58,6 +58,9 @@ contextBridge.exposeInMainWorld('terminusDesktop', {
   getAdblockCosmetics: (url) => ipcRenderer.invoke('terminus:adblock:cosmetics', url),
   getAdblockState: () => ipcRenderer.invoke('terminus:adblock:state'),
   setAdblockEnabled: (enabled) => ipcRenderer.invoke('terminus:adblock:set-enabled', enabled),
+  getNetworkState: () => ipcRenderer.invoke('terminus:network:state'),
+  setAllowPrivateNetworks: (allowPrivate) =>
+    ipcRenderer.invoke('terminus:network:set-allow-private', allowPrivate),
 });
 
 contextBridge.exposeInMainWorld('terminusShell', {
