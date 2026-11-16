@@ -333,16 +333,12 @@ const FIND_TRACE_EXPRESSION = `(() => {
     };
   };
   // Lo que separa una tecla de la prueba de una que llega de fuera: el código físico,
-  // el virtual, el modificador de estado y si caía dentro de la ventana marcada al
+  // el virtual y si caía dentro de la ventana marcada al
   // enviar la prueba (markSyntheticKeys).
   const keyInfo = (event) => ({
     key: event.key ?? null,
     code: event.code ?? null,
     keyCode: event.keyCode ?? null,
-    which: event.which ?? null,
-    location: event.location ?? null,
-    repeat: Boolean(event.repeat),
-    composing: Boolean(event.isComposing),
     visibility: document.visibilityState,
     sentByTest:
       typeof window.__e2eSyntheticUntil === 'number' &&
@@ -427,41 +423,10 @@ async function clearSyntheticKeys(client) {
   await client.evaluate('window.__e2eSyntheticUntil = 0').catch(() => undefined);
 }
 
-/** ¿La ventana de Terminus es la del primer plano ahora? Solo lee, no la activa. */
-function terminusForegroundState(pid) {
-  if (!pid) return null;
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    'Add-Type @"',
-    'using System;',
-    'using System.Runtime.InteropServices;',
-    'public class TerminusForegroundProbe {',
-    '  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
-    '}',
-    '"@',
-    `$process = Get-Process -Id ${pid}`,
-    'Write-Output ([TerminusForegroundProbe]::GetForegroundWindow() -eq $process.MainWindowHandle)',
-  ].join('\r\n');
-
-  try {
-    const output = execFileSync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', script],
-      { encoding: 'utf8', timeout: 8000, windowsHide: true },
-    );
-    return /true/i.test(output);
-  } catch {
-    return null;
-  }
-}
-
-/** Teclas que no envió la prueba, con el primer plano leído en este momento. */
-async function logStrayKeys(client, pid, label) {
+/** Teclas que no envió la prueba, tal como las registró el campo o el documento. */
+async function logStrayKeys(client, label) {
   const stray = await client.evaluate(FIND_STRAY_READ).catch(() => null);
-  console.log(
-    `${LOG} Teclas no enviadas por la prueba (${label}): ${JSON.stringify(stray)}` +
-      ` · ventana de Terminus en primer plano: ${terminusForegroundState(pid)}`,
-  );
+  console.log(`${LOG} Teclas no enviadas por la prueba (${label}): ${JSON.stringify(stray)}`);
 }
 
 async function setFindQuery(client, text) {
@@ -500,7 +465,7 @@ async function waitForSettledStatus(client, query, mode, previousStatus) {
       console.log(
         `${LOG} Traza del buscador (${query}): ${JSON.stringify(trace)}`,
       );
-      await logStrayKeys(client, app?.pid, 'al perder el texto');
+      await logStrayKeys(client, 'al perder el texto');
       throw new Error(
         `El buscador perdió el texto «${query}»: ahora tiene «${state.value}» ` +
           `(selección ${state.selStart}-${state.selEnd}, campo enfocado ${state.focused}, ` +
@@ -757,11 +722,9 @@ async function pressCtrlF(client, pid) {
     nativeProblem = error instanceof Error ? error.message : String(error);
   }
 
-  if (!nativeProblem && (await waitFindOpen(client, 3000))) {
-    await clearSyntheticKeys(client);
-    return 'nativo';
-  }
+  const nativeOpened = !nativeProblem && (await waitFindOpen(client, 3000));
   await clearSyntheticKeys(client);
+  if (nativeOpened) return 'nativo';
 
   console.log(`${LOG} Ctrl+F por CDP: ${nativeProblem ?? 'la tecla nativa no abrió el buscador'}`);
   await sendCtrlFViaCdp(client);
@@ -962,7 +925,7 @@ async function main() {
   assert.equal(closed.expanded, 'false', 'El conmutador del buscador quedó expandido tras Escape.');
   pass('Escape cerró el buscador y el conmutador volvió a su sitio.');
 
-  await logStrayKeys(cdp, app?.pid, 'fin de la corrida');
+  await logStrayKeys(cdp, 'fin de la corrida');
 
   assert.equal(
     stepsRun,
