@@ -196,14 +196,13 @@ describe('WebBrowserSurface', () => {
 
     // Es lo que manda el navegador cuando la lista se dibuja bajo un cursor quieto.
     fireEvent.mouseOver(option);
-    fireEvent.mouseEnter(option);
     expect(option.getAttribute('aria-selected')).toBe('false');
 
     fireEvent.submit(addressInput.closest('form')!);
     expect(onCommand).toHaveBeenCalledWith('exa');
   });
 
-  it('still lets a pointer that moves over a suggestion run it', () => {
+  it('lets a pointer that moves choose the suggestion, and drops it when it leaves', () => {
     const { onCommand } = renderSurface(pageTab);
     const addressInput = screen.getByRole('textbox', { name: 'Barra de direcciones y búsqueda' }) as HTMLInputElement;
 
@@ -214,6 +213,10 @@ describe('WebBrowserSurface', () => {
     fireEvent.mouseMove(option);
     expect(option.getAttribute('aria-selected')).toBe('true');
 
+    fireEvent.mouseLeave(option);
+    expect(option.getAttribute('aria-selected')).toBe('false');
+
+    fireEvent.mouseMove(option);
     fireEvent.submit(addressInput.closest('form')!);
     expect(onCommand).toHaveBeenCalledWith('goto https://example.com');
   });
