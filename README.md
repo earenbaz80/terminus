@@ -7,7 +7,7 @@ El estado del proyecto, los pendientes y las decisiones cerradas están en [ROAD
 ## Características
 
 - **Dos superficies**: navegador web real y terminal interactiva, con pestañas independientes.
-- **Cabecera única**: pestañas, herramientas, controles de ventana y menú de configuración (audio, temas, B&W y CRT) en una sola barra.
+- **Cabecera única**: pestañas, herramientas, controles de ventana y menú de configuración (audio, temas, B&W, CRT y red) en una sola barra.
 - **Navegador**: barra de direcciones con sugerencias de marcadores e historial global, historial por pestaña, favoritos, indicador HTTPS/HTTP y descarga de la página.
 - **Búsqueda web desde el inicio**: el campo de la pantalla de inicio busca directamente, sin abrir otra pantalla antes; las sugerencias son clicables y los resultados aparecen en Terminus Search.
 - **Vistas de página**: `REAL` (iframe directo cuando el sitio lo permite), `OSCURO` (proxy con hoja retro) y `TEXTO` (extracción legible).
@@ -66,16 +66,19 @@ npm run build:server
 npm run test:e2e:adblock     # Electron empaquetado: red, popups y cosméticos
 npm run test:e2e:installed    # Windows: Ctrl+F y búsqueda OSCURO/TEXTO
 npm run test:e2e:installed:ui # Windows: cabecera, tema persistido y búsqueda en un paso
+npm run test:e2e:network      # Windows: interruptor de red en la app empaquetada y en desktop:dev
 npm run test:e2e:python-sandbox # Chromium real; requiere npx playwright install chromium
 ```
 
-Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 41 archivos y 195 pruebas.
+Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 49 archivos y 267 pruebas.
 
 `test:e2e:adblock` arranca `release/win-unpacked/Terminus.exe` con Playwright, sirve un fixture local de anuncios y comprueba el bloqueo de red y de popups. Después navega a `https://example.com/` para verificar que los cosméticos de EasyList se aplican al iframe proxificado; el fixture local no sirve para cosméticos porque `127.0.0.1` no tiene eTLD. Requiere haber ejecutado `npm run desktop:dir` antes.
 
 `test:e2e:installed` requiere Windows, una sesión de escritorio interactiva y la app instalada a partir del build actual. Arranca una copia aislada con perfil temporal, usa `https://example.com/` para el iframe REAL cross-origin y un fixture local para las vistas proxificadas, envía `Ctrl+F` con `SendKeys` y comprueba una búsqueda real en OSCURO y TEXTO. Si el ejecutable está en otra ruta, define `TERMINUS_INSTALLED_EXE`.
 
 `test:e2e:installed:ui` usa el mismo arranque aislado (perfil temporal y CDP) contra la app empaquetada y cubre la interfaz: un solo `<header>` con las pestañas y los controles de ventana dentro, el menú de configuración abierto y un cambio de tema que queda en `localStorage` y se aplica tras recargar el renderer, y la búsqueda del inicio en un paso (escribir y Enter, sin botón intermedio). Falla si el build instalado no es el actual.
+
+`test:e2e:network` cubre la sección Red y privacidad de punta a punta: abre el menú, lee el estado que muestra y lo contrasta con lo que hace de verdad `/api/view` contra un fixture en `127.0.0.1` que levanta el propio guion, así que no necesita internet. Con la app empaquetada (`TERMINUS_BUILD_DIR`, por defecto `release/win-unpacked`) el cambio rige en la petición siguiente; con `electron .` prueba el camino de `desktop:dev`, donde el servidor es un proceso hijo: el menú guarda la decisión, el proxy y `/api/dns` siguen bloqueando, avisa de que hace falta reiniciar, y tras relanzar con el mismo perfil la decisión guardada se aplica a los dos endpoints. Falla si el menú y el proxy no coinciden. Ojo: `/api/view` responde 502 ante un destino privado rechazado, no 403. Cubre los dos endpoints de la política, `/api/view` y `/api/dns`, con el interruptor en cada posición. Con `TERMINUS_E2E_NETWORK_SKIP_DEV=1` corre solo el tramo empaquetado (8 de los 16 pasos) para aislar un runner inestable; el total esperado lo ajusta `expectedSteps()` en `scripts/e2e-suites.mjs`, que es también lo que compara el ejecutor, así que el recuento sigue cuadrando, y el log lo deja dicho con `OMITIDO desktop:dev`.
 
 Con `TERMINUS_E2E_LOCALE=en npm run test:e2e:installed:ui` (o `de`, `fr`, `it`) la prueba cambia el idioma desde el menú antes de comprobar nada. El cambio se valida con `document.documentElement.lang` y con que la barra de direcciones cambie de nombre accesible, sin comparar con ninguna cadena traducida.
 
@@ -113,7 +116,7 @@ El CI de push solo corre en ramas, así que un tag no compila dos veces. Los art
 - Los endpoints de sistema de archivos y bóveda requieren además el token de la sesión local (`X-Terminus-Token`), obtenido de `/api/session`.
 - Las rutas de workspace se validan con `path.relative` para impedir path traversal.
 - Los proxies tienen timeout, límite de tamaño (4 MB de texto, 50 MB de descarga) y bloqueo de endpoints de metadata cloud.
-- Por defecto, los proxies y el endpoint DNS rechazan destinos privados (loopback, RFC1918, link-local y CGNAT) y validan cada redirección. Cada hostname se resuelve una vez y la conexión real queda fijada a la IP validada, sin una segunda resolución DNS. Las direcciones IPv4-mapped IPv6 se canonicalizan antes de clasificarlas, incluidas las formas hexadecimales como `::ffff:7f00:1`. La vista REAL tampoco se usa para URLs privadas evidentes: esas pasan por el proxy. Para una intranet o un servidor local, habilita explícitamente `TERMINUS_ALLOW_PRIVATE=1` (o `TERMINUS_BLOCK_PRIVATE=0` / `TERMINUS_NETWORK_POLICY=local`) solo en redes de confianza.
+- Por defecto, los proxies y el endpoint DNS rechazan destinos privados (loopback, RFC1918, link-local y CGNAT) y validan cada redirección. Cada hostname se resuelve una vez y la conexión real queda fijada a la IP validada, sin una segunda resolución DNS. Las direcciones IPv4-mapped IPv6 se canonicalizan antes de clasificarlas, incluidas las formas hexadecimales como `::ffff:7f00:1`. La vista REAL tampoco se usa para URLs privadas evidentes: esas pasan por el proxy. Para una intranet o un servidor local, habilita explícitamente `TERMINUS_ALLOW_PRIVATE=1` (o `TERMINUS_BLOCK_PRIVATE=0` / `TERMINUS_NETWORK_POLICY=local`) solo en redes de confianza. En la aplicación de escritorio se activa lo mismo desde Configuración → Red y privacidad, con idéntico alcance: solo el proxy y el DNS del servidor. La vista REAL y el guard de peticiones siguen rechazando destinos privados aunque la excepción esté activa. Cuando la política rechaza un destino privado, `/api/view` responde **502**: el error de `fetchRemote` cae en el mismo `catch` que un destino inalcanzable. El **403** está reservado a los hosts de metadata cloud, así que un 502 sobre una URL privada es la política actuando, no un fallo del proxy.
 - Las páginas servidas por `/api/view` pasan por un sanitizador basado en parser (`sanitize-html`) con allowlist de etiquetas y atributos: elimina scripts, iframes, object/embed/portal, SVG/MathML, `srcdoc`, `xlink:href`, `formaction`, handlers inline y esquemas peligrosos. Se sirven con CSP de nonce, `frame-ancestors 'self'` y un `<base>` limitado por CSP al origen final validado. La CSP no permite CSS, fuentes, imágenes ni media remotos: las imágenes se reescriben a `${origen-local}/api/image`, que aplica la misma política de red y el pinning del proxy; el resto de recursos remotos queda bloqueado. Las imágenes inyectadas dinámicamente tampoco pueden saltarse la CSP.
 - En Electron, la vista REAL directa pasa por un forward proxy HTTP/HTTPS en loopback: Chromium solo conecta al proxy, que resuelve una vez, valida todas las direcciones y fija la IP elegida. HTTP se reenvía y HTTPS usa un túnel `CONNECT`, conservando SNI y la validación de certificados. La app en loopback queda fuera del proxy; una IP privada remota también se enruta al proxy y se rechaza. Además, un guard de `webRequest` combina EasyList con el bloqueo de destinos privados, subframes privados o no web y popups privados.
 - Los mensajes de navegación, atajo y resultado de búsqueda de los iframes exigen `event.source === iframe.contentWindow` y el origen esperado. Solo el iframe proxificado con origen opaco (`"null"`) puede controlar el chrome; un iframe REAL que envíe esos mensajes se ignora.
@@ -156,7 +159,9 @@ La prueba automatizada equivalente es `npm run test:e2e:installed`, que además 
 - `src/App.tsx`: estado de pestañas, sesión, historial global, modales y composición de la UI.
 - `src/components/WebBrowserSurface.tsx`: navegador, barra de direcciones, zoom, búsqueda (incluido el campo de la pantalla de inicio), descargas y paneles.
 - `src/components/HeaderBar.tsx`: pestañas, herramientas y fila superior con el menú de configuración y los controles de ventana.
-- `src/components/SettingsMenu.tsx`: menú de configuración con audio (mute, sintetizador, WAV) y apariencia (temas, B&W, CRT).
+- `src/components/SettingsMenu.tsx`: menú de configuración con audio (mute, sintetizador, WAV), apariencia (temas, B&W, CRT) y red y privacidad (excepción de destinos privados).
+- `src/utils/networkPreference.ts`: preferencia de red que el renderer refleja y que el proceso principal aplica y guarda.
+- `shared/networkPolicyEnv.cjs`: precedencia única de las variables `TERMINUS_*` de red; la leen el servidor (`blockPrivateNetworks`) y el proceso principal.
 - `src/components/WindowControls.tsx`: minimizar, maximizar y cerrar sobre la API de escritorio.
 - `src/components/TerminusSearchPage.tsx`: resultados de búsqueda y sugerencias compartidas con la pantalla de inicio.
 - `src/components/TerminalView.tsx`: terminal interna y puente PTY.

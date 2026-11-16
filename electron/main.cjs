@@ -5,6 +5,7 @@ const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 const { parse: parseDomain } = require('tldts-experimental');
 const { isBlockedAdUrl } = require('./adblock.cjs');
 const { isPrivateAddress, isPrivateTargetUrl } = require('./networkPolicy.cjs');
+const { envDecidesPrivateNetworks } = require('../shared/networkPolicyEnv.cjs');
 const { startForwardProxy } = require('./forwardProxy.cjs');
 const { execFileSync, spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
@@ -58,6 +59,70 @@ async function persistAdblockState() {
 }
 
 loadAdblockState();
+
+// Private destinations are blocked by default; the settings menu can grant the
+// same exception TERMINUS_ALLOW_PRIVATE gives, and only where that variable
+// applies: the local server's proxy and DNS. The REAL forward proxy and the
+// request guard keep rejecting private destinations. TERMINUS_BLOCK_PRIVATE=1 and
+// NETWORK_POLICY=public still win, so an explicit environment opt-out fails closed.
+const NETWORK_STATE_FILENAME = 'network-state.json';
+let allowPrivateNetworks = false;
+// Who decided the current policy: 'env' when the environment fixed it (the switch
+// cannot revoke it), 'stored' when the settings menu owns it. The API server runs
+// in this process only in the packaged app; `npm run desktop:dev` spawns it as a
+// child that inherits the environment once, so a change there needs a restart.
+let networkPolicySource = 'stored';
+let networkPolicyInProcess = false;
+
+const networkStatePath = () => path.join(app.getPath('userData'), NETWORK_STATE_FILENAME);
+
+function readStoredAllowPrivate() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(networkStatePath(), 'utf8'));
+    return parsed?.allowPrivate === true;
+  } catch {
+    return false; // No stored preference: keep the safe default.
+  }
+}
+
+// The server bundle reads TERMINUS_ALLOW_PRIVATE on every request, so mirroring the
+// decision here is the only channel this process shares with it. Only a policy the
+// switch owns is written there: an environment decision is never edited.
+function applyNetworkPolicyEnv() {
+  if (networkPolicySource !== 'stored') return;
+  if (allowPrivateNetworks) process.env.TERMINUS_ALLOW_PRIVATE = '1';
+  else delete process.env.TERMINUS_ALLOW_PRIVATE;
+}
+
+function loadNetworkState() {
+  // The same list the server uses per request, so the menu and the proxy agree.
+  const envPolicy = envDecidesPrivateNetworks(process.env);
+  networkPolicySource = envPolicy ? 'env' : 'stored';
+  allowPrivateNetworks = envPolicy ? envPolicy === 'allow' : readStoredAllowPrivate();
+  applyNetworkPolicyEnv();
+}
+
+async function persistNetworkState() {
+  try {
+    await fs.promises.writeFile(
+      networkStatePath(),
+      JSON.stringify({ allowPrivate: allowPrivateNetworks }),
+      'utf8'
+    );
+  } catch (error) {
+    console.warn('[Terminus] No se pudo guardar la política de red.', error);
+  }
+}
+
+const DENIED_NETWORK_STATE = { allowPrivate: false, available: false, appliesLive: false };
+
+const networkStateSnapshot = () => ({
+  allowPrivate: allowPrivateNetworks,
+  available: true,
+  appliesLive: networkPolicyInProcess,
+});
+
+loadNetworkState();
 let networkGuardOrigin = null;
 const dnsVerdictCache = new Map();
 const DNS_VERDICT_TTL_MS = 60_000;
@@ -147,8 +212,10 @@ async function startPackagedServer() {
   process.env.TERMINUS_DIST_DIR = distDirectory;
   process.env.TERMINUS_WORKSPACE_ROOT = workspaceDirectory;
 
-  // The bundle starts Express itself and serves the compiled SPA.
+  // The bundle starts Express itself and serves the compiled SPA. Because it runs
+  // here, the policy it reads per request is the one this process exposes.
   require(serverBundle);
+  networkPolicyInProcess = true;
 
   return {
     host: process.env.HOST,
@@ -1339,6 +1406,21 @@ function registerWindowIpc() {
       console.warn('[Terminus] No se pudo aplicar el bloqueo de publicidad.', error);
     }
     return { enabled: adblockEnabled, available: true };
+  });
+
+  ipcMain.handle('terminus:network:state', (event) =>
+    windowForEvent(event) ? networkStateSnapshot() : DENIED_NETWORK_STATE
+  );
+
+  ipcMain.handle('terminus:network:set-allow-private', async (event, allowPrivate) => {
+    if (!windowForEvent(event)) return DENIED_NETWORK_STATE;
+    // The menu only changes a decision it owns; an environment policy wins.
+    if (networkPolicySource === 'stored') {
+      allowPrivateNetworks = Boolean(allowPrivate);
+      applyNetworkPolicyEnv();
+      await persistNetworkState();
+    }
+    return networkStateSnapshot();
   });
 }
 

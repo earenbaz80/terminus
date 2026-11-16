@@ -24,6 +24,15 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { suiteSteps } from './e2e-suites.mjs';
+import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
+import {
+  CLEAR_TEST_KEYS,
+  READ_STRAY_KEYS,
+  SENT_BY_TEST,
+  STRAY_LIST,
+  markTestKeys,
+  strayKeysLine,
+} from './lib/e2e-stray-keys.mjs';
 import {
   assertInstalledMatchesBuild,
   captureFailureScreenshot,
@@ -69,9 +78,25 @@ const FIND_BAR_EXPRESSION = `(() => {
   return {
     open: Boolean(dialog),
     value: input?.value ?? null,
+    selStart: input?.selectionStart ?? null,
+    selEnd: input?.selectionEnd ?? null,
     status: status?.textContent?.trim() ?? '',
     focused: document.activeElement === input,
+    documentFocused: document.hasFocus(),
     frameMode,
+  };
+})()`;
+
+// Lo mismo que la expresión anterior, más el estado del foco del documento: sin él
+// no se distingue «la ventana no está en primer plano» de «el iframe se quedó el foco».
+const FIND_FOCUS_EXPRESSION = `(() => {
+  const bar = ${FIND_BAR_EXPRESSION};
+  return {
+    ...bar,
+    activeElement: (document.activeElement?.tagName ?? '') +
+      (document.activeElement?.getAttribute('aria-label')
+        ? '[' + document.activeElement.getAttribute('aria-label') + ']'
+        : ''),
   };
 })()`;
 
@@ -196,6 +221,7 @@ async function navigateToPage(client, url, expectedFramePart) {
     5000,
   );
   await sleep(200);
+  await markSyntheticKeys(client);
   await client.send('Input.dispatchKeyEvent', {
     type: 'keyDown',
     key: 'Enter',
@@ -212,6 +238,7 @@ async function navigateToPage(client, url, expectedFramePart) {
     windowsVirtualKeyCode: 13,
     nativeVirtualKeyCode: 13,
   });
+  await clearSyntheticKeys(client);
   await waitForExpression(
     client,
     `document.querySelector('iframe')?.src ?? null`,
@@ -251,16 +278,166 @@ async function openFindBar(client) {
   })()`);
   assert.equal(opened, true, `No se encontró el conmutador del buscador (${FIND_TOGGLE}).`);
 
-  return waitForExpression(
-    client,
-    FIND_BAR_EXPRESSION,
-    (state) => state.open && state.focused,
-    'el buscador abierto con su campo enfocado',
-    5000,
+  // Abrir el buscador no siempre deja el foco en su campo: el iframe proxied se lo
+  // queda si acaba de cargar y, si la ventana no está en primer plano, el campo no
+  // lo recibe. Antes de darlo por fallido se devuelve el primer plano a la ventana
+  // y, si aun así no vuelve, se enfoca el campo para poder seguir con la búsqueda.
+  // El contrato de foco del atajo se comprueba en el paso 1, no aquí.
+  const deadline = Date.now() + 10000;
+  let state = null;
+  let foregroundAttempts = 0;
+  let focusedByTest = false;
+
+  while (Date.now() < deadline) {
+    state = await client.evaluate(FIND_FOCUS_EXPRESSION);
+    if (state.open && state.focused) return state;
+
+    if (state.open && !state.documentFocused && foregroundAttempts < 2) {
+      foregroundAttempts += 1;
+      if (!bringToForeground(app?.pid)) {
+        console.log(`${LOG} La ventana no quedó en primer plano (intento ${foregroundAttempts}).`);
+      }
+    } else if (state.open && !focusedByTest && Date.now() > deadline - 6000) {
+      focusedByTest = true;
+      console.log(
+        `${LOG} El campo del buscador no recuperó el foco (activo: ${state.activeElement}); se enfoca desde la prueba.`,
+      );
+      await client.evaluate(`(() => {
+        const dialog = ${FIND_DIALOG_EXPRESSION};
+        dialog?.querySelector('${FIND_INPUT_SELECTOR}')?.focus();
+        return true;
+      })()`);
+    }
+
+    await sleep(250);
+  }
+
+  throw new Error(
+    `Timeout esperando el buscador abierto con su campo enfocado. Último estado: ${JSON.stringify(state)}`,
   );
 }
 
+/**
+ * Traza del campo del buscador: el valor tras escribirlo y en cada evento y cambio
+ * posterior, con la hora, para saber quién lo muta cuando pierde o gana un carácter.
+ * Se instala una vez por campo (y por documento); el muestreo cada 40 ms registra
+ * también los cambios que no disparan ningún evento de entrada.
+ */
+const FIND_TRACE_EXPRESSION = `(() => {
+  window.__e2eFindTrace = window.__e2eFindTrace || [];
+  const trace = window.__e2eFindTrace;
+  const push = (entry) => {
+    trace.push({ t: Math.round(performance.now()), ...entry });
+    if (trace.length > 400) trace.splice(0, trace.length - 400);
+  };
+  const read = () => {
+    const input = ${FIND_DIALOG_EXPRESSION}?.querySelector('${FIND_INPUT_SELECTOR}') ?? null;
+    return {
+      value: input?.value ?? null,
+      selStart: input?.selectionStart ?? null,
+      selEnd: input?.selectionEnd ?? null,
+      focused: document.activeElement === input,
+      hasFocus: document.hasFocus(),
+    };
+  };
+  // Lo que separa una tecla de la prueba de una que llega de fuera: el código físico,
+  // el virtual y si caía dentro de la ventana marcada al
+  // enviar la prueba (markSyntheticKeys).
+  const keyInfo = (event) => ({
+    key: event.key ?? null,
+    code: event.code ?? null,
+    keyCode: event.keyCode ?? null,
+    visibility: document.visibilityState,
+    sentByTest: ${SENT_BY_TEST},
+  });
+  const noteStray = (entry) => {
+    const list = (window.${STRAY_LIST} = window.${STRAY_LIST} || []);
+    list.push(entry);
+    if (list.length > 20) list.shift();
+  };
+  // Marca manual, para las fases que no son eventos (antes de escribir, tras escribir).
+  window.__e2eFindSnap = (kind) => push({ kind, ...read() });
+  const input = ${FIND_DIALOG_EXPRESSION}?.querySelector('${FIND_INPUT_SELECTOR}') ?? null;
+  if (input && !input.__e2eTraced) {
+    input.__e2eTraced = true;
+    [
+      'beforeinput', 'input', 'keydown', 'keyup', 'change', 'paste',
+      'compositionstart', 'compositionend', 'focus', 'blur',
+    ].forEach((type) => {
+      input.addEventListener(type, (event) => {
+        const entry = {
+          kind: type,
+          ...read(),
+          key: event.key ?? null,
+          data: event.data ?? null,
+          trusted: event.isTrusted,
+        };
+        if (type === 'keydown' || type === 'keyup') Object.assign(entry, keyInfo(event));
+        push(entry);
+        if (type === 'keydown' && entry.sentByTest === false) noteStray({ where: 'campo', ...entry });
+      });
+    });
+  }
+  // Teclas que llegan al documento: una pulsación perdida fuera del campo también
+  // puede acabar dentro si el foco vuelve a él a mitad del evento. Las que van al
+  // propio campo no se repiten aquí: ya las registra su listener.
+  if (!window.__e2eDocKeyTrace) {
+    window.__e2eDocKeyTrace = true;
+    document.addEventListener('keydown', (event) => {
+      const field = (${FIND_DIALOG_EXPRESSION})?.querySelector('${FIND_INPUT_SELECTOR}') ?? null;
+      if (event.target === field) return;
+      const entry = {
+        kind: 'doc-keydown',
+        ...read(),
+        ...keyInfo(event),
+        ctrl: Boolean(event.ctrlKey),
+        target: event.target?.tagName ?? null,
+        trusted: event.isTrusted,
+      };
+      push(entry);
+      if (entry.sentByTest === false) noteStray({ where: 'documento', ...entry });
+    }, true);
+  }
+  if (!window.__e2eFindTimer) {
+    let last = null;
+    window.__e2eFindTimer = setInterval(() => {
+      const now = read();
+      if (now.value !== last) {
+        last = now.value;
+        push({ kind: 'tick', ...now });
+      }
+    }, 40);
+  }
+  return true;
+})()`;
+
+const FIND_TRACE_READ = 'window.__e2eFindTrace ? window.__e2eFindTrace.slice(-120) : null';
+
+/** Marca la ventana en la que las teclas que lleguen son las que envía la propia prueba. */
+async function markSyntheticKeys(client, ms = 400) {
+  await client.evaluate(markTestKeys(ms)).catch(() => undefined);
+}
+
+/**
+ * Cierra la ventana en cuanto la tecla ya se procesó. Sin esto una marca de varios
+ * segundos tragaría como propias las teclas que llegan después.
+ */
+async function clearSyntheticKeys(client) {
+  await client.evaluate(CLEAR_TEST_KEYS).catch(() => undefined);
+}
+
+/** Teclas que no envió la prueba, tal como las registró el campo o el documento. */
+async function logStrayKeys(client, label) {
+  const stray = await client.evaluate(READ_STRAY_KEYS).catch(() => null);
+  console.log(strayKeysLine(LOG, label, stray));
+}
+
 async function setFindQuery(client, text) {
+  // La traza se instala antes de escribir, así el `input` que dispara la propia
+  // escritura y todo lo que venga después quedan registrados.
+  await client.evaluate(FIND_TRACE_EXPRESSION);
+  await client.evaluate('window.__e2eFindSnap("before-setFindQuery")');
+
   const changed = await client.evaluate(`(() => {
     const dialog = ${FIND_DIALOG_EXPRESSION};
     const input = dialog?.querySelector('${FIND_INPUT_SELECTOR}');
@@ -271,6 +448,7 @@ async function setFindQuery(client, text) {
     return true;
   })()`);
   assert.equal(changed, true, 'No se encontró el campo del buscador.');
+  await client.evaluate(`window.__e2eFindSnap(${JSON.stringify(`setFindQuery:${text}`)})`);
 }
 
 /**
@@ -286,7 +464,16 @@ async function waitForSettledStatus(client, query, mode, previousStatus) {
   while (Date.now() < deadline) {
     const state = await client.evaluate(FIND_BAR_EXPRESSION);
     if (state.value !== query) {
-      throw new Error(`El buscador perdió el texto «${query}»: ahora tiene «${state.value}».`);
+      const trace = await client.evaluate(FIND_TRACE_READ).catch(() => null);
+      console.log(
+        `${LOG} Traza del buscador (${query}): ${JSON.stringify(trace)}`,
+      );
+      await logStrayKeys(client, 'al perder el texto');
+      throw new Error(
+        `El buscador perdió el texto «${query}»: ahora tiene «${state.value}» ` +
+          `(selección ${state.selStart}-${state.selEnd}, campo enfocado ${state.focused}, ` +
+          `documento enfocado ${state.documentFocused}; la traza de arriba dice qué pasó entre medias).`,
+      );
     }
 
     if (state.status && state.status !== previousStatus) {
@@ -389,8 +576,10 @@ async function stepFindNavigation(client) {
 /** Cierra el buscador con Escape, como el usuario, y exige que el conmutador vuelva a su sitio. */
 async function stepEscapeClose(client) {
   const key = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 };
+  await markSyntheticKeys(client);
   await client.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key });
   await client.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+  await clearSyntheticKeys(client);
 
   return waitForExpression(
     client,
@@ -451,6 +640,38 @@ function sendNativeCtrlF(pid) {
   }
 }
 
+/** Deja la ventana en primer plano si puede; no lanza, devuelve si lo consiguió. */
+function bringToForeground(pid) {
+  if (!pid) return false;
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    'Add-Type @"',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public class TerminusForegroundState {',
+    '  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
+    '}',
+    '"@',
+    `$process = Get-Process -Id ${pid}`,
+    'for ($i = 0; $i -lt 20 -and $process.MainWindowHandle -eq 0; $i++) { Start-Sleep -Milliseconds 250; $process.Refresh() }',
+    '$shell = New-Object -ComObject WScript.Shell',
+    '[void]$shell.AppActivate($process.Id)',
+    'Start-Sleep -Milliseconds 300',
+    'Write-Output ([TerminusForegroundState]::GetForegroundWindow() -eq $process.MainWindowHandle)',
+  ].join('\r\n');
+
+  try {
+    const output = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { encoding: 'utf8', timeout: 8000, windowsHide: true },
+    );
+    return /true/i.test(output);
+  } catch {
+    return false;
+  }
+}
+
 /** Espera corta a que el buscador esté abierto; devuelve si lo consiguió. */
 async function waitFindOpen(client, timeoutMs) {
   try {
@@ -469,6 +690,7 @@ async function waitFindOpen(client, timeoutMs) {
 
 /** Envía Ctrl+F por CDP: el mismo before-input-event que la tecla real, sin ventana activa. */
 async function sendCtrlFViaCdp(client) {
+  await markSyntheticKeys(client);
   await client.send('Input.dispatchKeyEvent', {
     type: 'rawKeyDown',
     modifiers: 2,
@@ -495,18 +717,23 @@ async function sendCtrlFViaCdp(client) {
 async function pressCtrlF(client, pid) {
   let nativeProblem = null;
   try {
+    // La tecla nativa pasa por el sistema: la ventana se abre para cubrir el viaje
+    // por SendKeys y se cierra en cuanto el buscador está abierto.
+    await markSyntheticKeys(client, 2500);
     sendNativeCtrlF(pid);
   } catch (error) {
     nativeProblem = error instanceof Error ? error.message : String(error);
   }
 
-  if (!nativeProblem && (await waitFindOpen(client, 3000))) {
-    return 'nativo';
-  }
+  const nativeOpened = !nativeProblem && (await waitFindOpen(client, 3000));
+  await clearSyntheticKeys(client);
+  if (nativeOpened) return 'nativo';
 
   console.log(`${LOG} Ctrl+F por CDP: ${nativeProblem ?? 'la tecla nativa no abrió el buscador'}`);
   await sendCtrlFViaCdp(client);
-  if (!(await waitFindOpen(client, 3000))) {
+  const opened = await waitFindOpen(client, 3000);
+  await clearSyntheticKeys(client);
+  if (!opened) {
     throw new Error(
       'Ctrl+F no abrió el buscador ni con la tecla nativa ni por CDP: la app no responde al atajo.',
     );
@@ -552,6 +779,7 @@ async function main() {
     },
   });
   const cdp = app.client;
+
 
   // La barra de direcciones tiene que estar visible antes de escribir en ella.
   await waitForExpression(
@@ -650,9 +878,11 @@ async function main() {
     cdp,
     `(() => {
       const bar = ${FIND_BAR_EXPRESSION};
+      const probe = ${inputProbeExpression(ADDRESS_SELECTOR)};
       const toggle = document.querySelector('${FIND_TOGGLE}');
       const active = document.activeElement;
       return {
+        ...probe,
         ...bar,
         activeElement:
           (active?.tagName ?? '') +
@@ -697,6 +927,8 @@ async function main() {
   const closed = await stepEscapeClose(cdp);
   assert.equal(closed.expanded, 'false', 'El conmutador del buscador quedó expandido tras Escape.');
   pass('Escape cerró el buscador y el conmutador volvió a su sitio.');
+
+  await logStrayKeys(cdp, 'fin de la corrida');
 
   assert.equal(
     stepsRun,
