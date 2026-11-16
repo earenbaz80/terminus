@@ -252,7 +252,24 @@ Solo aplican al **respaldo**, es decir, a un build instalado anterior a los `dat
 | `La app instalada no contiene el atajo global` | Instalación antigua o build incorrecto. | Vuelve a ejecutar `npm run desktop:build` e instala ese instalador. |
 | `Ctrl+F por CDP: …` en el log | Otra ventana conserva el primer plano (o el foco de teclado no siguió a la activación) y la tecla nativa no entró. **No es un fallo**: el guion repite el atajo por CDP, que recorre el mismo `before-input-event` de Chromium y el mismo IPC de la app. El log lo deja escrito y continúa con la ruta `CDP`. | Nada. Si quieres que la corrida use la tecla nativa, deja Terminus en primer plano; el resto de comprobaciones es idéntico. |
 | `Ctrl+F no abrió el buscador ni con la tecla nativa ni por CDP` | El atajo no responde en absoluto: renderer sin cargar o build que no registra `before-input-event`. | Revisa el log de la app que imprime el guion, comprueba que el `app.asar` instalado es el actual y reinstala. |
+| `El buscador perdió el texto «X»: ahora tiene «X »` | Una tecla llegó al campo entre la escritura y la comprobación. La traza y la línea `Teclas no enviadas por la prueba` dicen si la envió la prueba y con qué código físico; si `sentByTest` es `false`, el campo recibió una pulsación real del sistema. | Nada que arreglar en la app mientras el diagnóstico lo atribuya a entrada externa. Si quieres una corrida limpia, no toques el teclado ni otras ventanas mientras dura la suite y deja Terminus en primer plano. |
 | `CDP no respondió` | La app terminó, el puerto está bloqueado o Electron no arrancó. | Revisa la cola del log de la app que imprime el script; comprueba antivirus/firewall y que el ejecutable sea el instalado. |
+
+### Cómo se lee la traza del buscador
+
+Cada corrida de Ctrl+F cierra con una línea `Teclas no enviadas por la prueba (<dónde>): [...] · ventana de Terminus en primer plano: true|false`, y también se imprime en el fallo con `<dónde>` = `al perder el texto`. La lista está vacía en una corrida limpia: contiene solo los `keydown` que no envió la suite.
+
+Para distinguirlos, la suite abre una marca (`window.__e2eSyntheticUntil`) justo antes de cada tecla que envía —`Ctrl+F` nativo, `Ctrl+F` por CDP, `Enter` de la barra y `Escape`— y la cierra en cuanto la tecla se procesó. Un `keydown` que llega fuera de esa ventana es ajeno a la prueba y se registra:
+
+| Campo | Para qué sirve |
+| --- | --- |
+| `sentByTest` | `false` = la tecla no salió de la suite: entró por el sistema (teclado físico, `SendKeys` de otro proceso, gestor de entrada). |
+| `key`, `code`, `keyCode`, `which`, `location` | Qué tecla y en qué posición física. Un espacio ajeno aparece como `key: " "`, `code: "Space"`, `keyCode: 32`; el teclado numérico o la mano derecha se ven en `location`. |
+| `trusted`, `repeat`, `composing` | `trusted` es `true` también en las teclas que inyecta CDP, por eso no basta como discriminante; `repeat` delata una tecla mantenida y `composing` un IME. |
+| `hasFocus`, `visibility` | Foco del documento y visibilidad en el momento del evento: separa una tecla que entró con la app activa de otra que llegó con la ventana oculta. |
+| `value`, `selStart`, `selEnd`, `focused` | Estado del campo en ese instante; junto al `tick` de 40 ms muestra si el carácter entró antes o después de la comprobación. |
+
+El primer plano de la ventana se lee cuando se imprime la línea, no en el instante de la tecla, así que es una pista: si `sentByTest` es `false`, `hasFocus` es `true` y `visibility` es `visible`, la pulsación llegó con la app activa y el culpable está fuera de la prueba.
 | `El iframe REAL no recibió el foco` | Ventana oculta, modal abierto o escritorio no interactivo. | Mantén la sesión visible, cierra diálogos y vuelve a lanzar la prueba. |
 | `No se encontró «Fixture»` en OSCURO/TEXTO | El proxy no pudo acceder al fixture loopback. | Comprueba que el firewall permita loopback; el E2E ya define `TERMINUS_BLOCK_PRIVATE=0` y `TERMINUS_NETWORK_POLICY=local` para la instancia de prueba. |
 | El instalador termina con código distinto de 0 | Instalación por usuario bloqueada o disco lleno. | Ejecuta el instalador en la misma cuenta del runner y revisa espacio/permisos. |
@@ -268,5 +285,6 @@ Solo aplican al **respaldo**, es decir, a un build instalado anterior a los `dat
 - [ ] El instalador se genera y se instala con `/S`.
 - [ ] El log contiene los cinco `PASS` de Ctrl+F (incluidos navegación y cierre con Escape).
 - [ ] Los tres logs cierran con su recuento (`STEPS: 5/5` en Ctrl+F y `STEPS: 8/8` en cada suite de UI); `scripts/e2e-run.mjs` falla si no coincide con el esperado, aunque el guion salga con 0.
+- [ ] El log de Ctrl+F trae la línea `Teclas no enviadas por la prueba`; si lista entradas, se adjunta al informe con su `sentByTest`, `code` y foco.
 - [ ] El paso anota la duración de cada `PASS` entre paréntesis, útil para ver un paso que empieza a rozar su espera.
 - [ ] El artefacto `e2e-installed-logs` está disponible.
