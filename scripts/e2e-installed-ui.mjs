@@ -70,6 +70,12 @@ const e2eLocale = (process.env.TERMINUS_E2E_LOCALE ?? '').trim();
 const START_FORM = 'form[role="search"]';
 // Ancla propia del campo de búsqueda del inicio: no depende de su posición ni del idioma.
 const START_INPUT = 'input[data-e2e="start-search-input"]';
+// Cajas donde se escribe durante la corrida; `where` de una tecla ajena dice en cuál cayó.
+const STRAY_FIELDS = [
+  ['inicio', START_INPUT],
+  ['barra', ADDRESS_SELECTOR],
+  ['resultados', `${START_FORM} input[type="search"]`],
+];
 // Ancla de las chips recientes: distingue una búsqueda recordada de una sugerencia fija.
 const RECENT_CHIP = '[data-e2e="recent-search"]';
 // El grupo de chips y su etiqueta: el paso 6 comprueba el recorte en ventana estrecha.
@@ -170,22 +176,24 @@ async function pressEnter(client) {
  * envía y lo que llega fuera de esa marca queda registrado: un espacio ajeno en el campo
  * explica un «un carácter» sin tener que adivinar con el valor final.
  */
-const START_STRAY_EXPRESSION = `(() => {
-  if (window.__e2eStartStrayTrace) return true;
-  window.__e2eStartStrayTrace = true;
+const STRAY_KEYS_EXPRESSION = `(() => {
+  if (window.__e2eStrayTrace) return true;
+  window.__e2eStrayTrace = true;
   document.addEventListener('keydown', (event) => {
     if (${SENT_BY_TEST}) return;
-    const field = document.querySelector(${JSON.stringify(START_INPUT)});
+    const hit = ${JSON.stringify(STRAY_FIELDS)}
+      .map(([name, selector]) => [name, document.querySelector(selector)])
+      .find(([, field]) => field && field === event.target) ?? null;
     const list = (window.${STRAY_LIST} = window.${STRAY_LIST} || []);
     list.push({
-      where: event.target === field ? 'campo' : 'documento',
+      where: hit ? hit[0] : 'documento',
       sentByTest: false,
       key: event.key ?? null,
       code: event.code ?? null,
       keyCode: event.keyCode ?? null,
       visibility: document.visibilityState,
       hasFocus: document.hasFocus(),
-      value: field?.value ?? null,
+      value: hit ? hit[1].value : null,
     });
     if (list.length > 20) list.shift();
   }, true);
@@ -526,7 +534,7 @@ async function main() {
   const cdp = app.client;
   // Desde el arranque, para que la línea final cubra toda la corrida y no solo los pasos
   // del inicio. Es idempotente y se repite tras cada recarga, que borra el renderer.
-  await cdp.evaluate(START_STRAY_EXPRESSION).catch(() => undefined);
+  await cdp.evaluate(STRAY_KEYS_EXPRESSION).catch(() => undefined);
 
   if (e2eLocale) await applyE2ELocale(cdp);
 
@@ -589,7 +597,7 @@ async function main() {
     `el tema ${chosen.id} tras recargar la app`,
     30000,
   );
-  await cdp.evaluate(START_STRAY_EXPRESSION).catch(() => undefined);
+  await cdp.evaluate(STRAY_KEYS_EXPRESSION).catch(() => undefined);
 
   const reopened = await openSettingsMenu(cdp);
   assert.equal(reopened.theme, chosen.id, 'El menú no refleja el tema guardado tras recargar.');
@@ -1159,7 +1167,9 @@ async function main() {
     'las dos pestañas con su URL e historial tras recargar el renderer',
     30000,
   );
-  await cdp.evaluate(START_STRAY_EXPRESSION).catch(() => undefined);  assert.equal(
+  await cdp.evaluate(STRAY_KEYS_EXPRESSION).catch(() => undefined);
+
+  assert.equal(
     restoredTabs.tabs[1].url,
     secondResult.address,
     'La segunda pestaña no volvió a su búsqueda tras recargar.',
