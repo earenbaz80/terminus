@@ -175,11 +175,9 @@ const ENTER_TRACE_EXPRESSION = `(() => {
     const options = box ? [...box.querySelectorAll('[role="option"]')] : [];
     const selected = options.filter((option) => option.getAttribute('aria-selected') === 'true');
     return {
-      open: Boolean(box) && box.getClientRects().length > 0,
       options: options.length,
       selected: selected.map((option) => (option.textContent ?? '').trim().slice(0, 60)),
       selectedIndex: options.indexOf(selected[0]),
-      labels: options.map((option) => (option.textContent ?? '').trim().slice(0, 40)).slice(0, 5),
     };
   };
   input.addEventListener('keydown', (event) => {
@@ -564,22 +562,19 @@ async function main() {
   assert.equal(startPage.formButtons, 1, 'El formulario de inicio tiene botones de más: ¿volvió el botón intermedio?');
   assert.equal(startPage.submitButtons, 1, 'El único botón del formulario de inicio no es el de envío.');
 
-  // Si el envío se pierde, la traza del campo dice qué valor tenía en cada evento.
+  // Si el envío se pierde, bastan dos banderas: si el Enter llegó al campo y si el
+  // formulario se envió. Separa «la tecla fue a otro sitio» de «el formulario no
+  // reaccionó», que es toda la clasificación que hace falta aquí.
   await cdp.evaluate(`(() => {
-    window.__e2eSubmitTrace = [];
     const input = document.querySelector(${JSON.stringify(START_INPUT)});
-    const snap = (kind) => window.__e2eSubmitTrace.push({
-      kind,
-      value: input?.value ?? null,
-      selStart: input?.selectionStart ?? null,
-      selEnd: input?.selectionEnd ?? null,
-      hasFocus: document.hasFocus(),
+    window.__e2eFieldEvents = { enterOnField: false, submit: false, valueAtEnter: null, hasFocusAtEnter: null };
+    input?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      window.__e2eFieldEvents.enterOnField = true;
+      window.__e2eFieldEvents.valueAtEnter = input.value;
+      window.__e2eFieldEvents.hasFocusAtEnter = document.hasFocus();
     });
-    window.__e2eSnap = snap;
-    input?.addEventListener('input', () => snap('input'));
-    input?.addEventListener('keydown', (event) => snap('keydown:' + event.key));
-    document.addEventListener('submit', () => snap('submit'), true);
-    snap('start');
+    document.addEventListener('submit', () => { window.__e2eFieldEvents.submit = true; }, true);
     return true;
   })()`);
 
@@ -610,7 +605,6 @@ async function main() {
     5000,
   );
   await pressEnter(cdp);
-  await cdp.evaluate('window.__e2eSnap && window.__e2eSnap("after-enter")').catch(() => null);
 
   const searched = await waitForExpression(
     cdp,
@@ -637,9 +631,9 @@ async function main() {
     'la búsqueda del inicio en un solo paso',
     25000,
   ).catch(async (error) => {
-    const trace = await cdp.evaluate('window.__e2eSubmitTrace').catch(() => null);
+    const events = await cdp.evaluate('window.__e2eFieldEvents').catch(() => null);
     const probe = await cdp.evaluate(inputProbeExpression(ADDRESS_SELECTOR)).catch(() => null);
-    console.log(`${LOG} El campo del inicio tenía estos valores antes del envío: ${JSON.stringify(trace)}`);
+    console.log(`${LOG} Eventos del campo del inicio: ${JSON.stringify(events)}`);
     console.log(`${LOG} Foco y barra tras el Enter: ${JSON.stringify(probe)}`);
     throw error;
   });
@@ -687,15 +681,11 @@ async function main() {
       .evaluate(`(() => {
         const input = document.querySelector(${JSON.stringify(START_INPUT)});
         const active = document.activeElement;
-        const base = ${inputProbeExpression(ADDRESS_SELECTOR)};
         return {
-          ...base,
+          hasFocus: document.hasFocus(),
           startInput: Boolean(input),
           startInputFocused: Boolean(input) && active === input,
-          activeElement:
-            (active?.tagName ?? '') +
-            (active?.getAttribute('aria-label') ? '[' + active.getAttribute('aria-label') + ']' : ''),
-          visibility: document.visibilityState,
+          activeElement: (active?.tagName ?? '') + (active?.getAttribute('aria-label') ? '[' + active.getAttribute('aria-label') + ']' : ''),
         };
       })()`)
       .catch(() => null);
@@ -958,11 +948,10 @@ async function main() {
           history = JSON.parse(localStorage.getItem(${JSON.stringify(HISTORY_KEY)}) ?? '[]');
         } catch {}
         return {
-          lastCommands: Array.isArray(history) ? history.slice(-4) : [],
+          lastCommands: Array.isArray(history) ? history.slice(-2) : [],
           dispatched: Array.isArray(history) && history.includes('tab new web'),
           address: document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)})?.value ?? null,
           documentFocused: document.hasFocus(),
-          activeElement: document.activeElement?.tagName ?? null,
         };
       })()`)
       .catch(() => null);
