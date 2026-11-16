@@ -1,11 +1,14 @@
 name: CI
 
 on:
-  # Solo ramas: un tag lo publica el workflow Release, así que el push de un tag
-  # no compila el instalador dos veces.
+  # Solo `main`: una rama de trabajo ya tiene su check en el PR, y con `push` sobre
+  # cualquier rama el mismo SHA compilaba el instalador dos veces, una por el push y
+  # otra por el pull_request. Un push a una rama sin PR no corre CI hasta abrir el PR
+  # (o lanzarlo a mano con workflow_dispatch). Los tags no disparan esto: los publica
+  # el workflow Release.
   push:
     branches:
-      - '**'
+      - main
   pull_request:
   # Nocturno: main corre las tres suites, incluida la de alemán.
   schedule:
