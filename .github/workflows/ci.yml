@@ -37,9 +37,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
-  # Decide si hace falta compilar el instalador. Recoge el patrón de rutas que antes
-  # vivía dentro de `windows`, para que haya una sola definición de «toca la app»:
-  # si el PR solo toca documentación, `windows` se omite y `requerido` sigue verde
+  # Decide si hace falta compilar el instalador. La regla vive en
+  # `scripts/lib/app-paths.mjs`, con pruebas propias que la comparan con el README,
+  # con los docs del E2E y con este workflow: aquí solo se trae la lista de ficheros
+  # del PR. Si el PR no toca la app, `windows` se omite y `requerido` sigue verde
   # porque acepta un job omitido. No es un corte por fork: el fork decide si se
   # puede instalar, no si hay algo que compilar.
   cambios:
@@ -50,6 +51,9 @@ jobs:
       app_changed: ${{ steps.detectar.outputs.app_changed }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: Detectar si el PR toca la app
         id: detectar
         shell: bash
@@ -60,29 +64,18 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # Mismo patrón que usaba el gate del E2E instalado.
-          patron='^(src/|electron/|scripts/|assets/|index\.html$|package(-lock)?\.json$|vite\.config\.|vitest\.config\.|tsconfig[^/]*\.json$|electron-builder)'
-          app_changed=true
-          motivo='no es un PR: se compila'
+          archivos=''
+          consulta_fallo=0
           if [ "$EVENT_NAME" = 'pull_request' ]; then
-            # Si la consulta falla o no devuelve ficheros, se compila: un verde sin
-            # build es peor que un build de más.
-            if archivos=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[].filename'); then
-              if [ -z "$archivos" ]; then
-                motivo='la consulta no devolvió ficheros: se compila'
-              elif grep -Eq "$patron" <<< "$archivos"; then
-                motivo='el PR toca la app'
-              else
-                app_changed=false
-                motivo='PR sin cambios de app: se omite el build de Windows'
-              fi
-            else
-              motivo='la consulta de ficheros falló: se compila'
-            fi
+            # Si la consulta falla o no devuelve ficheros, el módulo compila: un
+            # verde sin build es peor que un build de más.
+            archivos=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[].filename') || consulta_fallo=1
           fi
-          echo "app_changed=$app_changed" >> "$GITHUB_OUTPUT"
-          echo "- **Build de Windows:** $motivo" >> "$GITHUB_STEP_SUMMARY"
-          echo "cambios: app_changed=$app_changed ($motivo)"
+          argumentos=(--evento "$EVENT_NAME")
+          if [ "$consulta_fallo" -eq 1 ]; then
+            argumentos+=(--consulta-fallo)
+          fi
+          printf '%s' "$archivos" | node scripts/lib/app-paths.mjs "${argumentos[@]}"
 
   # Veredicto rápido: lint y unitarios sin esperar al build ni al E2E. Corre en
   # paralelo con `windows`, y `requerido` sigue siendo el check que protege
@@ -138,8 +131,15 @@ jobs:
           path: coverage/lcov.info
           if-no-files-found: error
 
+      # `npm audit` sale con 1 en cuanto hay un advisory, incluso uno excluido; el
+      # informe JSON manda y `audit-gate.mjs` decide qué bloquea. Las exclusiones
+      # llevan motivo y fecha de revisión, y vencen solas.
       - name: Auditar dependencias (incluye desarrollo)
-        run: npm audit --audit-level=moderate
+        shell: pwsh
+        run: |
+          $informe = Join-Path $env:RUNNER_TEMP 'npm-audit.json'
+          npm audit --json > $informe
+          node scripts/lib/audit-gate.mjs $informe
 
       - name: Instalar Chromium para Playwright
         run: npx playwright install chromium
