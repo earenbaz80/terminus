@@ -26,6 +26,12 @@ on:
         default: false
         type: boolean
 
+      adblock_drills:
+        description: 'Ejecutar los dos ensayos de clasificación del E2E de adblock (motor sin listas y destino inalcanzable)'
+        required: false
+        default: false
+        type: boolean
+
 permissions:
   contents: read
   pull-requests: write
@@ -370,13 +376,14 @@ jobs:
             artifacts/e2e/adblock-electron.log
           if-no-files-found: ignore
 
-      # Ensayos de clasificación, solo en el nocturno: el guion se ejecuta dos veces
-      # más contra fallos que no son del producto y que deben salir con código 2.
-      # Si alguno deja de clasificarse como red, el nocturno se pone rojo en vez de
+      # Ensayos de clasificación, en el nocturno y con `adblock_drills` en un
+      # dispatch: el guion se ejecuta dos veces más contra fallos que no son del
+      # producto y que deben salir con código 2.
+      # Si alguno deja de clasificarse como red, el run se pone rojo en vez de
       # depender de que alguien lo pruebe a mano.
       - name: 'Ensayo de adblock: motor sin listas'
         id: drill_engine
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event.inputs.adblock_drills == 'true'
         timeout-minutes: 10
         shell: pwsh
         env:
@@ -403,7 +410,7 @@ jobs:
 
       - name: 'Ensayo de adblock: destino inalcanzable'
         id: drill_offline
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event.inputs.adblock_drills == 'true'
         timeout-minutes: 10
         shell: pwsh
         env:
@@ -429,7 +436,7 @@ jobs:
 
       - name: Publicar ensayos de adblock
         id: upload_drills
-        if: always() && github.event_name == 'schedule'
+        if: always() && (github.event_name == 'schedule' || github.event.inputs.adblock_drills == 'true')
         uses: actions/upload-artifact@v7
         with:
           name: e2e-adblock-drills
@@ -596,7 +603,7 @@ jobs:
 
           $drillLink = if ($env:DRILL_URL) { "[Logs]($env:DRILL_URL)" } else { 'sin logs' }
           $drillsText = if (-not $env:DRILL_ENGINE -or $env:DRILL_ENGINE -eq 'skipped') {
-            'No ejecutados (solo en el nocturno)'
+            'No ejecutados (nocturno o adblock_drills)'
           } elseif ($env:DRILL_ENGINE -eq 'success' -and $env:DRILL_OFFLINE -eq 'success') {
             "OK (motor sin listas y sin red, los dos con código 2) - $drillLink"
           } else {
