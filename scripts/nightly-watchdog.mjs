@@ -3,9 +3,11 @@
  * Watchdog del nocturno del CI.
  *
  * Falla si el workflow de CI no tiene ninguna corrida programada en las últimas
- * 36 h. Nació porque el cron llevaba días con cero ejecuciones y nada lo
- * detectaba: la vigilancia del proyecto existía en el YAML y en ningún otro
- * sitio.
+ * 36 h, o si la última que tiene no terminó en verde. Nació porque el cron
+ * llevaba días con cero ejecuciones y nada lo detectaba: la vigilancia del
+ * proyecto existía en el YAML y en ningún otro sitio. El segundo motivo se
+ * añadió después de que dos nocturnos seguidos salieran rojos en el ensayo de
+ * adblock sin que nadie se enterara.
  *
  * Solo cuenta corridas con `event=schedule` del workflow de CI: un dispatch
  * manual no vale, porque lo que se vigila es justamente que el cron dispare.
@@ -79,6 +81,22 @@ function writeSummary(lines) {
   }
 }
 
+/** Cómo se llama el problema en la anotación y qué hay que hacer al respecto. */
+function describe(result) {
+  if (result.problem === 'red') {
+    return {
+      title: 'Nocturno rojo',
+      annotation: `${result.reason}. El nocturno disparó y falló: mira el run y su artefacto e2e-adblock-drills.`,
+      hint: 'El nocturno corrió y no quedó verde. Abre el run, revisa el job `windows` y, si el fallo es del E2E de adblock, el artefacto `e2e-adblock-drills`.',
+    };
+  }
+  return {
+    title: 'Sin corridas nocturnas',
+    annotation: `${result.reason}. El cron de ${workflow} no está disparando.`,
+    hint: 'El cron de CI no ha corrido. Revisa que el workflow siga activo y que `on.schedule` esté en el YAML.',
+  };
+}
+
 try {
   const runs = await loadRuns();
   const result = evaluateNightlyRuns(runs, { maxAgeHours });
@@ -91,22 +109,34 @@ try {
     }
   }
 
+  const lastResult = result.lastRun ? result.lastRun.conclusion ?? result.lastRun.status ?? 'sin estado' : 'sin corridas';
+
   if (result.ok) {
     console.log(`${LOG} OK: ${result.reason}`);
-    writeSummary(['## Watchdog del nocturno', '', `- **Estado:** OK`, `- **Última corrida:** ${result.lastRun.createdAt} (${result.lastRun.ageHours} h)`, `- **Límite:** ${maxAgeHours} h`, '']);
+    writeSummary([
+      '## Watchdog del nocturno',
+      '',
+      '- **Estado:** OK',
+      `- **Última corrida:** ${result.lastRun.createdAt} (${result.lastRun.ageHours} h)`,
+      `- **Resultado:** ${lastResult}`,
+      `- **Límite:** ${maxAgeHours} h`,
+      '',
+    ]);
   } else {
+    const { title, annotation, hint } = describe(result);
     console.error(`${LOG} FAIL: ${result.reason}`);
     // Anotación en el check para que el motivo se lea sin abrir el log.
-    console.error(`::error title=Sin corridas nocturnas::${result.reason}. El cron de ${workflow} no está disparando.`);
+    console.error(`::error title=${title}::${annotation}`);
     writeSummary([
       '## Watchdog del nocturno',
       '',
       '- **Estado:** FAIL',
       `- **Motivo:** ${result.reason}`,
+      `- **Resultado:** ${lastResult}`,
       `- **Workflow:** ${workflow}`,
       `- **Límite:** ${maxAgeHours} h`,
       '',
-      'El cron de CI no ha corrido. Revisa que el workflow siga activo y que `on.schedule` esté en el YAML.',
+      hint,
       '',
     ]);
     process.exitCode = 1;
