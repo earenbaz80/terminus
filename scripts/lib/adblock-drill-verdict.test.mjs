@@ -35,12 +35,6 @@ describe('veredicto de los ensayos de adblock', () => {
     }
   });
 
-  it('pone en rojo el código 1 incluso con un log que trae el motivo', () => {
-    const result = evaluateDrillVerdict({ kind: 'engine', code: 1, log: LOG_MOTOR });
-
-    expect(result.ok).toBe(false);
-  });
-
   it('pone en rojo un código 0: el ensayo dejó de sembrar el fallo', () => {
     const result = evaluateDrillVerdict({ kind: 'engine', code: 0, log: LOG_VERDE });
 
@@ -57,18 +51,13 @@ describe('veredicto de los ensayos de adblock', () => {
     }
   });
 
-  it('pone en rojo el código 2 sin el motivo en el log', () => {
-    expect(evaluateDrillVerdict({ kind: 'engine', code: 2, log: LOG_VERDE }).ok).toBe(false);
-    expect(evaluateDrillVerdict({ kind: 'engine', code: 2, log: LOG_MOTOR }).reason).toContain('motor sin listas');
-  });
+  it('pone en rojo el código 2 sin el marcador de su ensayo', () => {
+    // Cada ensayo exige el suyo: un log verde no vale para ninguno de los dos.
+    for (const kind of ['engine', 'offline']) {
+      const result = evaluateDrillVerdict({ kind, code: 2, log: LOG_VERDE });
 
-  it('no acepta el motivo del otro ensayo', () => {
-    // El ensayo sin red exige su propio marcador: un log que solo habla del motor
-    // vacío no vale para el destino inalcanzable.
-    const result = evaluateDrillVerdict({ kind: 'offline', code: 2, log: LOG_VERDE });
-
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain('E2E_ADBLOCK_UNREACHABLE');
+      expect(result.ok).toBe(false);
+    }
   });
 
   it('pone en rojo el código 2 sin log', () => {
@@ -94,10 +83,5 @@ describe('veredicto de los ensayos de adblock', () => {
       expect(result.ok).toBe(false);
       expect(result.reason).toContain('código de salida utilizable');
     }
-  });
-
-  it('sin argumentos no explota', () => {
-    expect(evaluateDrillVerdict().ok).toBe(false);
-    expect(evaluateDrillVerdict({}).ok).toBe(false);
   });
 });

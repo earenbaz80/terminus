@@ -42,22 +42,20 @@ export function drillProfile(kind) {
  *   run: (env: object) => number,
  *   copyLog: (from: string, to: string) => void,
  *   readLog: (path: string) => string | null,
- *   write?: (message: string) => void,
  * }} input
- * @returns {{ ok: boolean, code: number | null, reason: string, logPath: string | null }}
+ * @returns {{ ok: boolean, code: number | null, reason: string }}
  */
-export function runDrill({ kind, run, copyLog, readLog, write = () => {} } = {}) {
+export function runDrill({ kind, run, copyLog, readLog } = {}) {
   const profile = drillProfile(kind);
   if (!profile) {
     const validos = Object.keys(DRILL_PROFILES).join(', ');
-    return { ok: false, code: null, reason: `ensayo desconocido «${kind}»; los válidos son: ${validos}.`, logPath: null };
+    return { ok: false, code: null, reason: `ensayo desconocido «${kind}»; los válidos son: ${validos}.` };
   }
 
-  write(`Ejecutando \`npm ${DRILL_NPM_ARGS.join(' ')}\` como ensayo «${kind}».`);
   const code = run(profile.env);
   copyLog(E2E_LOG, profile.logPath);
 
   // Se juzga el log copiado, no el del E2E: es el que se publica en el artefacto.
   const { ok, reason } = evaluateDrillVerdict({ kind, code, log: readLog(profile.logPath) });
-  return { ok, code, reason, logPath: profile.logPath };
+  return { ok, code, reason };
 }

@@ -15,23 +15,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { parseArgs } from 'node:util';
 import { DRILL_NPM_ARGS, runDrill } from './lib/adblock-drill-runner.mjs';
 
-const LOG = '[adblock-drill]';
-
-function option(name) {
-  const inline = process.argv.find((arg) => arg.startsWith(`${name}=`));
-  if (inline) return inline.slice(name.length + 1);
-  const index = process.argv.indexOf(name);
-  const value = index >= 0 ? process.argv[index + 1] : undefined;
-  return value && !value.startsWith('--') ? value : undefined;
-}
-
-const kind = option('--kind') ?? '';
+const { values } = parseArgs({ options: { kind: { type: 'string' } }, strict: false });
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 const result = runDrill({
-  kind,
+  kind: values.kind ?? '',
   run: (env) => {
     const child = spawnSync(npm, DRILL_NPM_ARGS, {
       stdio: 'inherit',
@@ -40,7 +31,7 @@ const result = runDrill({
       shell: process.platform === 'win32',
     });
     if (child.error) {
-      console.error(`${LOG} No se pudo lanzar ${npm}: ${child.error.message}`);
+      console.error(`No se pudo lanzar ${npm}: ${child.error.message}`);
       return 1;
     }
     return child.status ?? 1;
@@ -60,13 +51,12 @@ const result = runDrill({
       return null;
     }
   },
-  write: (message) => console.log(`${LOG} ${message}`),
 });
 
+// Una sola línea en el fallo: la anotación del check, que además queda en el log.
 if (result.ok) {
-  console.log(`${LOG} OK: ${result.reason}`);
+  console.log(`Ensayo de adblock OK: ${result.reason}`);
 } else {
-  console.error(`${LOG} FAIL: ${result.reason}`);
-  console.error(`::error title=Ensayo de adblock en rojo::${result.reason}`);
+  console.log(`::error title=Ensayo de adblock en rojo::${result.reason}`);
   process.exitCode = 1;
 }
