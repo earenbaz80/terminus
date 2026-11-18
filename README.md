@@ -70,7 +70,7 @@ npm run test:e2e:network      # Windows: interruptor de red en la app empaquetad
 npm run test:e2e:python-sandbox # Chromium real; requiere npx playwright install chromium
 ```
 
-Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 49 archivos y 267 pruebas.
+Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 51 archivos y 296 pruebas.
 
 `test:e2e:adblock` arranca `release/win-unpacked/Terminus.exe` con Playwright, sirve un fixture local de anuncios y comprueba el bloqueo de red y de popups. Después navega a `https://example.com/` para verificar que los cosméticos de EasyList se aplican al iframe proxificado; el fixture local no sirve para cosméticos porque `127.0.0.1` no tiene eTLD. Requiere haber ejecutado `npm run desktop:dir` antes.
 
@@ -97,7 +97,7 @@ El workflow `CI` (`.github/workflows/ci.yml`) se dispara de cuatro formas, y sol
 
 Un tag no dispara CI: el filtro `branches` de `push` lo excluye, y el instalador de un tag lo publica el workflow `Release`.
 
-En un PR **solo de documentación** el job `Cambios` mira los ficheros del PR con el patrón de rutas que antes vivía en el gate del E2E —`src/`, `electron/`, `scripts/`, `assets/`, `index.html`, `package.json`/`package-lock.json`, la configuración de Vite, Vitest, TypeScript y `electron-builder`— y, si ninguno coincide, `windows` se omite: el run se queda en `Checks` más el gate de 3 s. Eso no afloja la protección de `main`: `requerido` acepta un job omitido a propósito, un fallo del detector pone el check en rojo, el push que sigue al merge compila igual y un PR de fuera que toque la app también compila. Medido: el PR #106, dos ficheros sin código, tardó 2 min 12 s de run, contra 3 min 50 s del #105 con build.
+En un PR **solo de documentación** el job `Cambios` mira los ficheros del PR con el patrón de rutas que antes vivía en el gate del E2E —`src/`, `electron/`, `scripts/`, `assets/`, `index.html`, `package.json`/`package-lock.json`, `vite.config.`, `vitest.config.`, `tsconfig*.json` y `electron-builder`—. La lista vive en `scripts/lib/app-paths.mjs`, con pruebas que fallan si se separa de este README, de los docs del E2E o del workflow. Si ninguno coincide, `windows` se omite: el run se queda en `Checks` más el gate de 3 s. Eso no afloja la protección de `main`: `requerido` acepta un job omitido a propósito, un fallo del detector pone el check en rojo, el push que sigue al merge compila igual y un PR de fuera que toque la app también compila. Medido: el PR #106, dos ficheros sin código, tardó 2 min 12 s de run, contra 3 min 50 s del #105 con build.
 
 Si pusheás una rama **sin PR abierto** no vas a ver ninguna corrida: abrí el PR, o lanzala a mano con `gh workflow run ci.yml --ref <rama>`. Antes, `push` cubría todas las ramas y cada PR corría dos veces el mismo SHA —una por el push y otra por el `pull_request`—, con su build de Windows y su E2E duplicados. El veredicto rápido de una rama se saca en local, que además es más barato que el job `Checks` de CI: `npm run lint` y `npm test` no instalan Chromium ni auditan dependencias, y el job de CI tarda 2 min 13 s en `windows-latest`. Por eso no se reabre `push` a todas las ramas: recuperar ese run costaría un `Checks` duplicado de 2 min en cada PR, a cambio de un ahorro de build que ya está hecho.
 
