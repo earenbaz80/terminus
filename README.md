@@ -93,7 +93,7 @@ El workflow `CI` (`.github/workflows/ci.yml`) se dispara de cuatro formas, y sol
 | `push` | solo `main` | Veredicto del merge recién hecho, que ningún PR cubre. |
 | `pull_request` | cualquier rama | El único run de una rama de trabajo: pushear la rama no dispara nada, abrir o actualizar su PR sí. Si el PR solo toca documentación, el job `Cambios` lo detecta y omite el build de Windows. |
 | `schedule` | `main`, 03:30 UTC | Nocturno con las cuatro suites, incluida la de alemán. |
-| `workflow_dispatch` | la rama que elijas | Manual, con `run_installed_e2e` y `adblock_offline`. |
+| `workflow_dispatch` | la rama que elijas | Manual, con `run_installed_e2e`, `adblock_offline` y `adblock_drills`. |
 
 Un tag no dispara CI: el filtro `branches` de `push` lo excluye, y el instalador de un tag lo publica el workflow `Release`.
 
