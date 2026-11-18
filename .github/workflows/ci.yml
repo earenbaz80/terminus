@@ -396,6 +396,10 @@ jobs:
             throw 'El ensayo con el motor vacío salió con código 2, pero el log no atribuye el fallo al motor sin listas.'
           }
           Write-Host 'Ensayo del motor vacío: código 2 y motivo del motor, como se esperaba.'
+          # El último comando nativo del paso sale con 2: sin un `exit` propio el
+          # paso terminaba con ese código y el nocturno salía rojo aunque la
+          # clasificación fuera la correcta (17 de noviembre de 2026).
+          exit 0
 
       - name: 'Ensayo de adblock: destino inalcanzable'
         id: drill_offline
@@ -419,6 +423,9 @@ jobs:
             throw 'El ensayo sin red salió con código 2, pero el log no marca E2E_ADBLOCK_UNREACHABLE.'
           }
           Write-Host 'Ensayo sin red: código 2 y marcador de red inalcanzable, como se esperaba.'
+          # Igual que en el ensayo del motor vacío: el paso dice él mismo cómo
+          # termina, en vez de heredar el código 2 de `npm`.
+          exit 0
 
       - name: Publicar ensayos de adblock
         id: upload_drills
