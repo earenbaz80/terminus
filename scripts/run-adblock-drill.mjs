@@ -16,7 +16,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { DRILL_NPM_ARGS, runDrill } from './lib/adblock-drill-runner.mjs';
+import { E2E_NPM_ARGS } from './lib/adblock-drills.mjs';
+import { runDrill } from './lib/adblock-drill-runner.mjs';
 
 const { values } = parseArgs({ options: { kind: { type: 'string' } }, strict: false });
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -24,7 +25,7 @@ const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const result = runDrill({
   kind: values.kind ?? '',
   run: (env) => {
-    const child = spawnSync(npm, DRILL_NPM_ARGS, {
+    const child = spawnSync(npm, E2E_NPM_ARGS, {
       stdio: 'inherit',
       env: { ...process.env, ...env },
       // En Windows `npm` es un `.cmd`: sin shell no se puede lanzar.

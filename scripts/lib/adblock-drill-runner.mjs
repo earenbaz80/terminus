@@ -1,38 +1,23 @@
 /**
  * Runner de los ensayos de clasificación del E2E de adblock.
  *
- * Cada ensayo es un comando y nada más: corre `npm run test:e2e:adblock` con el
- * fallo sembrado, copia el log del E2E al nombre del ensayo y aplica el veredicto
- * de `adblock-drill-verdict.mjs`. Antes eso lo hacía PowerShell en varios comandos
- * —leer `$LASTEXITCODE`, copiar el log, llamar al clasificador y decidir cómo
- * terminaba el paso—, así que el cableado sólo se podía probar en un runner de
- * Windows. Con las dependencias inyectadas, la matriz se prueba en vitest con un
- * runner falso, sin `pwsh` y sin lanzar Electron.
+ * Cada ensayo es un comando y nada más: corre el E2E con el fallo sembrado, copia
+ * su log al nombre del ensayo y aplica el veredicto de `adblock-drill-verdict.mjs`.
+ * Las variables que siembran el fallo y el nombre del log salen de
+ * `adblock-drills.mjs`, la misma configuración que usa el veredicto.
+ *
+ * Antes eso lo hacía PowerShell en varios comandos —leer `$LASTEXITCODE`, copiar
+ * el log, llamar al clasificador y decidir cómo terminaba el paso—, así que el
+ * cableado sólo se podía probar en un runner de Windows. Con las dependencias
+ * inyectadas, la matriz se prueba en vitest con un runner falso, sin `pwsh` y sin
+ * lanzar Electron.
  */
 
+import { DRILLS, drillConfig } from './adblock-drills.mjs';
 import { evaluateDrillVerdict } from './adblock-drill-verdict.mjs';
-
-/** Lo que se ejecuta de verdad para producir el fallo sembrado. */
-export const DRILL_NPM_ARGS = ['run', 'test:e2e:adblock'];
 
 /** Log que escribe el E2E, sea cual sea el ensayo. */
 export const E2E_LOG = 'artifacts/e2e/adblock-electron.log';
-
-export const DRILL_PROFILES = {
-  engine: {
-    env: { TERMINUS_E2E_ADBLOCK_SEED_EMPTY_ENGINE: '1' },
-    logPath: 'artifacts/e2e/adblock-drill-engine.log',
-  },
-  offline: {
-    env: { TERMINUS_E2E_ADBLOCK_PROBE_URLS: 'http://127.0.0.1:9/' },
-    logPath: 'artifacts/e2e/adblock-drill-offline.log',
-  },
-};
-
-/** Perfil del ensayo, o `null` si el nombre no existe. */
-export function drillProfile(kind) {
-  return Object.prototype.hasOwnProperty.call(DRILL_PROFILES, kind) ? DRILL_PROFILES[kind] : null;
-}
 
 /**
  * Corre el E2E del ensayo y aplica el veredicto.
@@ -46,16 +31,16 @@ export function drillProfile(kind) {
  * @returns {{ ok: boolean, code: number | null, reason: string }}
  */
 export function runDrill({ kind, run, copyLog, readLog } = {}) {
-  const profile = drillProfile(kind);
-  if (!profile) {
-    const validos = Object.keys(DRILL_PROFILES).join(', ');
+  const drill = drillConfig(kind);
+  if (!drill) {
+    const validos = Object.keys(DRILLS).join(', ');
     return { ok: false, code: null, reason: `ensayo desconocido «${kind}»; los válidos son: ${validos}.` };
   }
 
-  const code = run(profile.env);
-  copyLog(E2E_LOG, profile.logPath);
+  const code = run(drill.env);
+  copyLog(E2E_LOG, drill.logPath);
 
   // Se juzga el log copiado, no el del E2E: es el que se publica en el artefacto.
-  const { ok, reason } = evaluateDrillVerdict({ kind, code, log: readLog(profile.logPath) });
+  const { ok, reason } = evaluateDrillVerdict({ kind, code, log: readLog(drill.logPath) });
   return { ok, code, reason };
 }

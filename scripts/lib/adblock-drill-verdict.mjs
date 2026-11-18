@@ -2,8 +2,10 @@
  * Veredicto de los ensayos de clasificación del E2E de adblock.
  *
  * Los ensayos siembran un fallo del arnés —motor vacío o destino inalcanzable—
- * y esperan que `scripts/e2e-adblock-electron.mjs` salga con código 2, para
- * comprobar que un fallo de red no se confunde con una regresión del producto.
+ * y esperan que el E2E salga con código 2, para comprobar que un fallo de red no
+ * se confunde con una regresión del producto. Las etiquetas y los marcadores
+ * salen de `adblock-drills.mjs`, y el significado de cada código de
+ * `adblock-exit.mjs`: las mismas piezas que usa el paso normal del job.
  *
  * Esto vive aquí, y no dentro de los pasos de PowerShell, por dos motivos: el
  * veredicto es lógica pura y se puede probar sin `pwsh`, y un código que no se
@@ -11,12 +13,8 @@
  * en vez de colarse por un `exit 0` mal puesto (PR #109).
  */
 
-export const DRILLS = {
-  engine: { label: 'motor sin listas', marker: /motor sin listas/i, markerLabel: 'motor sin listas' },
-  offline: { label: 'destino inalcanzable', marker: /E2E_ADBLOCK_UNREACHABLE/, markerLabel: 'E2E_ADBLOCK_UNREACHABLE' },
-};
-
-export const UNEXPECTED_CODE = 2;
+import { DRILLS, drillConfig } from './adblock-drills.mjs';
+import { EXIT_NETWORK, classifyAdblockExit } from './adblock-exit.mjs';
 
 /**
  * @param {{ kind?: string, code?: number, log?: string | null }} input
@@ -24,27 +22,29 @@ export const UNEXPECTED_CODE = 2;
  * @returns {{ ok: boolean, reason: string }}
  */
 export function evaluateDrillVerdict({ kind, code, log } = {}) {
-  const drill = DRILLS[kind];
+  const drill = drillConfig(kind);
   if (!drill) {
     const known = Object.keys(DRILLS).join(', ');
     return { ok: false, reason: `ensayo desconocido «${kind}»; los válidos son: ${known}.` };
   }
 
-  if (!Number.isInteger(code)) {
+  const exit = classifyAdblockExit(code);
+
+  if (exit === 'unknown') {
     return { ok: false, reason: `no llegó un código de salida utilizable (${JSON.stringify(code)}).` };
   }
 
-  if (code === 1) {
+  if (exit === 'regression') {
     return {
       ok: false,
       reason: `el E2E salió con código 1 en el ensayo «${drill.label}»: es una regresión del producto, no un fallo de red. Un fallo real tiene que poner el paso en rojo.`,
     };
   }
 
-  if (code !== UNEXPECTED_CODE) {
+  if (exit !== 'network') {
     return {
       ok: false,
-      reason: `el ensayo «${drill.label}» debía salir con código ${UNEXPECTED_CODE} (se clasifica como red) y salió con ${code}.`,
+      reason: `el ensayo «${drill.label}» debía salir con código ${EXIT_NETWORK} (se clasifica como red) y salió con ${code}.`,
     };
   }
 
