@@ -329,39 +329,17 @@ jobs:
       # El E2E de adblock lanza Playwright contra `release/win-unpacked`, así que va
       # justo después del build y antes de instalar: no depende del gate del E2E
       # instalado ni de una sesión de escritorio interactiva.
-      # Código 2 = el runner no alcanzó example.com o las listas de EasyList. Eso no
-      # dice nada del producto: se avisa y el job sigue verde. Cualquier otro código
-      # sigue siendo un fallo, así que una regresión real no se puede colar.
+      # Código 2 = el runner no alcanzó example.com o las listas de EasyList: se avisa
+      # y el job sigue verde. Cualquier otro código sigue siendo un fallo, así que una
+      # regresión real no se puede colar. La regla vive en `scripts/lib/adblock-e2e-step.mjs`,
+      # sobre los códigos de `adblock-exit.mjs`: los mismos que interpretan los ensayos.
       - name: E2E de adblock en Electron
         id: e2e_adblock
         timeout-minutes: 12
-        shell: pwsh
         env:
           # Solo lo rellena un dispatch con la casilla marcada; en el resto, vacío.
           ADBLOCK_OFFLINE: ${{ github.event.inputs.adblock_offline }}
-        run: |
-          # Ensayo del camino sin red, sin cortar la red del runner: el guion recibe
-          # un destino inalcanzable y tiene que salir con código 2.
-          if ($env:ADBLOCK_OFFLINE -eq 'true') {
-            $env:TERMINUS_E2E_ADBLOCK_PROBE_URLS = 'http://127.0.0.1:9/'
-            'forced=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-            Write-Host 'Ensayo sin red: TERMINUS_E2E_ADBLOCK_PROBE_URLS=http://127.0.0.1:9/'
-          }
-          # El guion escribe su propia salida en `artifacts/e2e/adblock-electron.log`
-          # (UTF-8), así que el artefacto lleva el diagnóstico sin depender del shell.
-          npm run test:e2e:adblock
-          $code = $LASTEXITCODE
-          if ($code -eq 2) {
-            'skipped=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-            $reason = if ($env:ADBLOCK_OFFLINE -eq 'true') {
-              'Ensayo sin red pedido con workflow_dispatch (destino inalcanzable, código 2); el comportamiento es el de un runner sin red.'
-            } else {
-              'El runner no alcanzó example.com o las listas de EasyList (código 2); no se puede distinguir una regresión de un fallo de red.'
-            }
-            Write-Host "::warning title=E2E de adblock omitido::$reason"
-            exit 0
-          }
-          exit $code
+        run: node scripts/run-adblock-e2e.mjs
 
       # El artefacto lleva la captura y el log del paso; se suben aunque el paso falle,
       # que es justo cuando hacen falta.
@@ -377,62 +355,23 @@ jobs:
           if-no-files-found: ignore
 
       # Ensayos de clasificación, en el nocturno y con `adblock_drills` en un
-      # dispatch: el guion se ejecuta dos veces más contra fallos que no son del
-      # producto y que deben salir con código 2.
+      # dispatch: `scripts/run-adblock-drill.mjs` corre el E2E con el fallo
+      # sembrado y aplica el veredicto él mismo —código 2 con su motivo en el log
+      # deja el paso en verde, y cualquier otro código, incluido el 1 de una
+      # regresión, lo pone en rojo—, sin PowerShell de por medio.
       # Si alguno deja de clasificarse como red, el run se pone rojo en vez de
       # depender de que alguien lo pruebe a mano.
       - name: 'Ensayo de adblock: motor sin listas'
         id: drill_engine
         if: github.event_name == 'schedule' || github.event.inputs.adblock_drills == 'true'
         timeout-minutes: 10
-        shell: pwsh
-        env:
-          TERMINUS_E2E_ADBLOCK_SEED_EMPTY_ENGINE: '1'
-        run: |
-          $ErrorActionPreference = 'Stop'
-          npm run test:e2e:adblock
-          $code = $LASTEXITCODE
-          $log = 'artifacts/e2e/adblock-drill-engine.log'
-          if (Test-Path -LiteralPath 'artifacts/e2e/adblock-electron.log') {
-            Copy-Item -LiteralPath 'artifacts/e2e/adblock-electron.log' -Destination $log -Force
-          }
-          if ($code -ne 2) {
-            throw "El ensayo con el motor vacío debía salir con código 2 (clasificación como red) y salió con $code."
-          }
-          if (-not (Select-String -LiteralPath $log -Pattern 'motor sin listas' -Quiet -ErrorAction SilentlyContinue)) {
-            throw 'El ensayo con el motor vacío salió con código 2, pero el log no atribuye el fallo al motor sin listas.'
-          }
-          Write-Host 'Ensayo del motor vacío: código 2 y motivo del motor, como se esperaba.'
-          # El último comando nativo del paso sale con 2: sin un `exit` propio el
-          # paso terminaba con ese código y el nocturno salía rojo aunque la
-          # clasificación fuera la correcta (17 de noviembre de 2026).
-          exit 0
+        run: node scripts/run-adblock-drill.mjs --kind=engine
 
       - name: 'Ensayo de adblock: destino inalcanzable'
         id: drill_offline
         if: github.event_name == 'schedule' || github.event.inputs.adblock_drills == 'true'
         timeout-minutes: 10
-        shell: pwsh
-        env:
-          TERMINUS_E2E_ADBLOCK_PROBE_URLS: 'http://127.0.0.1:9/'
-        run: |
-          $ErrorActionPreference = 'Stop'
-          npm run test:e2e:adblock
-          $code = $LASTEXITCODE
-          $log = 'artifacts/e2e/adblock-drill-offline.log'
-          if (Test-Path -LiteralPath 'artifacts/e2e/adblock-electron.log') {
-            Copy-Item -LiteralPath 'artifacts/e2e/adblock-electron.log' -Destination $log -Force
-          }
-          if ($code -ne 2) {
-            throw "El ensayo sin red debía salir con código 2 (fallo de infraestructura) y salió con $code."
-          }
-          if (-not (Select-String -LiteralPath $log -Pattern 'E2E_ADBLOCK_UNREACHABLE' -Quiet -ErrorAction SilentlyContinue)) {
-            throw 'El ensayo sin red salió con código 2, pero el log no marca E2E_ADBLOCK_UNREACHABLE.'
-          }
-          Write-Host 'Ensayo sin red: código 2 y marcador de red inalcanzable, como se esperaba.'
-          # Igual que en el ensayo del motor vacío: el paso dice él mismo cómo
-          # termina, en vez de heredar el código 2 de `npm`.
-          exit 0
+        run: node scripts/run-adblock-drill.mjs --kind=offline
 
       - name: Publicar ensayos de adblock
         id: upload_drills

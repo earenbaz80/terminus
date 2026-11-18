@@ -18,23 +18,27 @@ describe('watchdog del nocturno', () => {
     const result = evaluateNightlyRuns([], { now: NOW });
 
     expect(result.ok).toBe(false);
+    expect(result.problem).toBe('missing');
     expect(result.lastRun).toBeNull();
     expect(result.reason).toMatch(/no hay ninguna corrida programada/);
     expect(result.maxAgeHours).toBe(DEFAULT_MAX_AGE_HOURS);
   });
 
-  it('una corrida reciente mantiene la vigilancia viva', () => {
+  it('una corrida reciente y verde mantiene la vigilancia viva', () => {
     const result = evaluateNightlyRuns([run(5)], { now: NOW });
 
     expect(result.ok).toBe(true);
+    expect(result.problem).toBe('none');
     expect(result.lastRun.ageHours).toBe(5);
     expect(result.reason).toContain('límite 36 h');
+    expect(result.reason).toContain('terminó en verde');
   });
 
   it('pasa del límite cuando la última es vieja', () => {
     const result = evaluateNightlyRuns([run(40)], { now: NOW });
 
     expect(result.ok).toBe(false);
+    expect(result.problem).toBe('stale');
     expect(result.lastRun.ageHours).toBe(40);
     expect(result.reason).toContain('más que el límite de 36 h');
   });
@@ -57,13 +61,54 @@ describe('watchdog del nocturno', () => {
     expect(result.runs).toHaveLength(3);
   });
 
-  it('cuenta una corrida fallida como cron vivo', () => {
-    // El watchdog vigila que el cron dispare, no que el nocturno pase: un fallo
-    // del propio E2E ya se ve como check rojo en su corrida.
+  it('falla cuando la última corrida terminó en rojo', () => {
+    // Antes el watchdog solo vigilaba que el cron disparase: los nocturnos del
+    // 16 y 17 de noviembre estuvieron rojos y nadie lo vio. Un rojo es un
+    // veredicto, no un disparo vivo.
     const result = evaluateNightlyRuns([run(6, { conclusion: 'failure' })], { now: NOW });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.problem).toBe('red');
     expect(result.reason).toContain('failure');
+    expect(result.reason).toContain('https://github.com/earenbaz80/terminus/actions/runs/600');
+  });
+
+  it('trata como rojo cualquier final que no sea success', () => {
+    for (const conclusion of ['cancelled', 'timed_out', 'action_required', 'neutral']) {
+      const result = evaluateNightlyRuns([run(6, { conclusion })], { now: NOW });
+
+      expect(result.ok).toBe(false);
+      expect(result.problem).toBe('red');
+      expect(result.reason).toContain(conclusion);
+    }
+  });
+
+  it('una corrida en curso cuenta como disparo vivo', () => {
+    for (const status of ['in_progress', 'queued']) {
+      const result = evaluateNightlyRuns([run(2, { conclusion: null, status })], { now: NOW });
+
+      expect(result.ok).toBe(true);
+      expect(result.problem).toBe('none');
+      expect(result.reason).toContain(status);
+    }
+  });
+
+  it('la antigüedad gana al color cuando el cron lleva días parado', () => {
+    const result = evaluateNightlyRuns([run(60, { conclusion: 'failure' })], { now: NOW });
+
+    expect(result.ok).toBe(false);
+    expect(result.problem).toBe('stale');
+    expect(result.reason).toContain('más que el límite de 36 h');
+  });
+
+  it('un rojo de ayer se reporta como rojo aunque haya corridas más nuevas en curso', () => {
+    const result = evaluateNightlyRuns(
+      [run(30, { conclusion: 'failure' }), run(20, { conclusion: null, status: 'in_progress' })],
+      { now: NOW },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('in_progress');
   });
 
   it('ignora entradas sin fecha utilizable', () => {

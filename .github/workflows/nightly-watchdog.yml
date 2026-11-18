@@ -1,8 +1,9 @@
 name: Nightly watchdog
 
 # El CI tiene un cron diario a las 03:30 UTC. Este workflow, que corre después,
-# falla si ese cron no ha disparado en las últimas 36 h: sin él, que GitHub deje
-# de lanzar el nocturno (o que el YAML pierda `on.schedule`) no lo nota nadie.
+# falla si ese cron no ha disparado en las últimas 36 h o si su última corrida no
+# terminó en verde; sin él, ninguna de las dos cosas la nota nadie: la vigilancia
+# vivía en el YAML y en ningún otro sitio.
 on:
   schedule:
     # 09:00 UTC: después del nocturno de las 03:30, con margen por los retrasos
@@ -22,7 +23,7 @@ permissions:
 
 jobs:
   watchdog:
-    name: Nocturno en las últimas 36 h
+    name: Nocturno reciente y en verde
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -37,7 +38,7 @@ jobs:
 
       # El script solo usa módulos de Node y `fetch`, así que no hace falta
       # instalar dependencias: el watchdog tarda segundos.
-      - name: Comprobar el cron del CI
+      - name: Comprobar el cron y el resultado del CI
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
