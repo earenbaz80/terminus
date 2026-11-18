@@ -131,8 +131,15 @@ jobs:
           path: coverage/lcov.info
           if-no-files-found: error
 
+      # `npm audit` sale con 1 en cuanto hay un advisory, incluso uno excluido; el
+      # informe JSON manda y `audit-gate.mjs` decide qué bloquea. Las exclusiones
+      # llevan motivo y fecha de revisión, y vencen solas.
       - name: Auditar dependencias (incluye desarrollo)
-        run: npm audit --audit-level=moderate
+        shell: pwsh
+        run: |
+          $informe = Join-Path $env:RUNNER_TEMP 'npm-audit.json'
+          npm audit --json > $informe
+          node scripts/lib/audit-gate.mjs $informe
 
       - name: Instalar Chromium para Playwright
         run: npx playwright install chromium
