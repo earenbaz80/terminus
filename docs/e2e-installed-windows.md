@@ -101,6 +101,8 @@ Si falla, la anotación del check dice el motivo y el resumen repite la ventana 
 
 Para ensayar el camino «sin red» del E2E de adblock sin cortar la red del runner, marca `adblock_offline`: el paso recibe `TERMINUS_E2E_ADBLOCK_PROBE_URLS=http://127.0.0.1:9/`, sale con código 2 y el job tiene que quedar **verde** con el `::warning` «E2E de adblock omitido» y el resumen «Omitido (sin red) - ensayo con workflow_dispatch». Es la forma de comprobar en Actions que un fallo de red no se confunde con una regresión.
 
+Para probar la clasificación de los dos ensayos sin esperar al nocturno, marca `adblock_drills`: el job `windows` ejecuta «Ensayo de adblock: motor sin listas» y «Ensayo de adblock: destino inalcanzable» igual que en el cron, publica sus logs en el artefacto `e2e-adblock-drills` y escribe el resultado en el resumen del job. Sirve para comprobar un cambio en esos pasos en el mismo run que lo introduce, en vez de esperar a la corrida programada.
+
 ### Desde la CLI
 
 ```bash
