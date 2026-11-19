@@ -257,6 +257,10 @@ try {
   await address.fill(fixtureUrl);
   await address.press('Enter');
   await page.waitForTimeout(5000);
+  // Las páginas externas abren en NATIVO por defecto. Este E2E verifica los
+  // cosméticos y la CSP del proxy, así que pide REAL explícitamente.
+  await page.getByRole('button', { name: 'REAL', exact: true }).click();
+  await page.waitForTimeout(2500);
   console.log('ADDRESS_VALUE', await address.inputValue().catch(() => '<sin barra>'));
   console.log('PAGE_URL', page.url());
   console.log('BODY_TEXT', (await page.locator('body').innerText().catch(() => '<sin body>')).slice(0, 1200));

@@ -145,6 +145,8 @@ export default function App() {
   const [nativeFsInfo, setNativeFsInfo] = useState<NativeFsInfo | null>(null);
 
   // Boot screen: the retro banner opens every terminal session
+  // Command output that must stay visible on the browser surface, where there is no log pane.
+  const [webNotice, setWebNotice] = useState<TerminalLogEntry | null>(null);
   const [bootLogs] = useState<TerminalLogEntry[]>(() => [
     {
       id: 'boot_ascii',
@@ -1114,6 +1116,32 @@ export default function App() {
     setTabs((prev) => prev.map((t) => (t.id === activeTabId ? { ...t, viewMode: mode } : t)));
   };
 
+  // El navegador nativo navega por su cuenta (enlaces, redirecciones): la
+  // pestaña refleja esa URL y título para que la barra y el historial sigan bien.
+  const handleNativeNavigation = useCallback(
+    (url: string, title: string) => {
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.id !== activeTabId) return tab;
+          if (tab.url === url) {
+            return title && tab.title !== title ? { ...tab, title } : tab;
+          }
+          const history = [...tab.history.slice(0, tab.historyIndex + 1), url];
+          return {
+            ...tab,
+            url,
+            displayUrl: url,
+            title: title || url,
+            history,
+            historyIndex: history.length - 1,
+            isLoading: false,
+          };
+        })
+      );
+    },
+    [activeTabId]
+  );
+
   const handleSetZoom = (zoom: number) => {
     const next = Math.min(2, Math.max(0.5, Math.round(zoom * 10) / 10));
     setTabs((prev) => prev.map((t) => (t.id === activeTabId ? { ...t, zoom: next } : t)));
@@ -1275,6 +1303,9 @@ export default function App() {
               )
             }
             latencyMs={metrics.latencyMs}
+            commandNotice={webNotice}
+            onDismissCommandNotice={() => setWebNotice(null)}
+            onNativeNavigation={handleNativeNavigation}
           />
         ) : (
           <Suspense

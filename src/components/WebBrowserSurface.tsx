@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Bookmark, BrowserTab, PageMode, ThemeConfig } from '../types';
+import { Bookmark, BrowserTab, PageMode, TerminalLogEntry, ThemeConfig } from '../types';
 import { soundEffects } from '../utils/soundEffects';
 import { BOOT_ASCII } from '../utils/bootBanner';
 import { getLatencyGlow } from '../utils/latencyGlow';
@@ -40,6 +40,11 @@ import { useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/messages';
 import { SignalLostScene } from './SignalLostScene';
 import { useNetworkStatus } from '../utils/useNetworkStatus';
+import {
+  createNativeWebview,
+  partitionForUrl,
+  NativeWebviewElement,
+} from '../utils/nativeBrowser';
 
 /** App forwards the standard Ctrl/Cmd+L browser shortcut through this event. */
 export const FOCUS_ADDRESS_EVENT = 'termbrowser:focus-address';
@@ -61,12 +66,18 @@ interface WebBrowserSurfaceProps {
   /** A framed proxy page reports its own failure so the surface can show the error scene. */
   onPageStatus?: (status: number) => void;
   latencyMs?: number;
+  /** Output of the last command that deserves an on-page notice (errors, translations). */
+  commandNotice?: TerminalLogEntry | null;
+  onDismissCommandNotice?: () => void;
+  /** In-page navigation inside the native Chromium view, so the tab keeps its URL/title. */
+  onNativeNavigation?: (url: string, title: string) => void;
 }
 
 const sameUrl = (a: string, b: string) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
 
 const PAGE_MODES: { id: PageMode; labelKey: MessageKey; titleKey: MessageKey }[] = [
   { id: 'real', labelKey: 'browser.modeReal', titleKey: 'browser.modeRealTitle' },
+  { id: 'native', labelKey: 'browser.modeNative', titleKey: 'browser.modeNativeTitle' },
   { id: 'dark', labelKey: 'browser.modeDark', titleKey: 'browser.modeDarkTitle' },
   { id: 'text', labelKey: 'browser.modeText', titleKey: 'browser.modeTextTitle' },
 ];
@@ -107,6 +118,7 @@ const rememberMode = (host: string, mode: PageMode): void => {
 
 const MODE_LABELS: Record<PageMode, MessageKey> = {
   real: 'browser.modeReal',
+  native: 'browser.modeNative',
   dark: 'browser.modeDark',
   text: 'browser.modeText',
 };
@@ -256,6 +268,9 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   onSetZoom,
   onPageStatus,
   latencyMs,
+  commandNotice,
+  onDismissCommandNotice,
+  onNativeNavigation,
 }) => {
   const latencyLabel =
     typeof latencyMs === 'number' && Number.isFinite(latencyMs) ? `${Math.round(latencyMs)} ms` : '—';
@@ -297,6 +312,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [localZoom, setLocalZoom] = useState(1);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const nativeContainerRef = useRef<HTMLDivElement>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const addressSuggestions = buildAddressSuggestions(
     address,
@@ -390,7 +406,17 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   // real page by default: dark and text are opt-in per site.
   useEffect(() => {
     const host = hostOf(tab?.url ?? '');
-    setMode(tab?.viewMode ?? (host ? loadModeMap()[host] : undefined) ?? 'real');
+    const saved = host ? loadModeMap()[host] : undefined;
+    // En escritorio las páginas externas abren en el motor Chromium real
+    // (NATIVO); REAL/OSCURO/TEXTO quedan como opciones explícitas y una
+    // preferencia guardada por sitio siempre gana.
+    const nativeAvailable = Boolean(
+      typeof window !== 'undefined' && window.terminusNative?.available
+    );
+    const external = Boolean(tab?.url && /^https?:\/\//i.test(tab.url) && !isTerminusSearchUrl(tab.url));
+    const fallback: PageMode = nativeAvailable && external ? 'native' : 'real';
+    const savedIsUsable = saved && (saved !== 'native' || nativeAvailable);
+    setMode(tab?.viewMode ?? (savedIsUsable ? saved : undefined) ?? fallback);
   }, [tab?.id, tab?.url, tab?.viewMode]);
 
   // Mirror the shared history so ↑/↓ walks the same commands as the terminal
@@ -691,14 +717,27 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   const proxied = (view: PageMode) => `/api/view?url=${encodeURIComponent(tab?.url ?? '')}&mode=${view}`;
   // Never let a stale frameable flag or a persisted tab bypass the network policy.
   const directFrame = Boolean(hasExternalPage && tab?.frameable && !isPrivateTargetUrl(currentTabUrl));
+
+  // El motor Chromium real solo existe en la app de escritorio.
+  const nativeBrowserAvailable = Boolean(
+    typeof window !== 'undefined' && window.terminusNative?.available
+  );
+  // Un modo guardado como nativo no debe romper una pestaña normal del navegador.
+  const viewMode: PageMode = mode === 'native' && !nativeBrowserAvailable ? 'real' : mode;
+  const nativeViewActive = Boolean(
+    nativeBrowserAvailable && viewMode === 'native' && hasExternalPage && tab?.url
+  );
+
   const src = !tab
     ? 'about:blank'
-    : mode === 'real'
+    : viewMode === 'native'
+    ? 'about:blank'
+    : viewMode === 'real'
     ? directFrame
       ? tab.url
       : proxied('real')
-    : proxied(mode);
-  const usesProxy = Boolean(hasExternalPage && (mode !== 'real' || !directFrame));
+    : proxied(viewMode);
+  const usesProxy = Boolean(hasExternalPage && (viewMode !== 'real' || !directFrame));
   const connection = getConnectionState(address.trim() || currentUrl);
   const connectionLabel = t(connection.labelKey);
 
@@ -722,6 +761,81 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       '*'
     );
   }, [findQuery, usesProxy, t]);
+
+  // La página nativa es un <webview>: Chromium la dibuja dentro del documento, así
+  // que ocupa su hueco del layout y la interfaz se pinta encima sin recortarla.
+  const nativeNavigationRef = useRef(onNativeNavigation);
+  nativeNavigationRef.current = onNativeNavigation;
+  const nativeViewRef = useRef<NativeWebviewElement | null>(null);
+  const nativeReadyRef = useRef(false);
+  const nativeZoomRef = useRef(zoom);
+  nativeZoomRef.current = zoom;
+  const pendingNativeUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const host = nativeContainerRef.current;
+    if (!nativeViewActive || !tab?.url || !host) return undefined;
+
+    const view = createNativeWebview();
+    view.className = 'h-full w-full';
+    view.setAttribute('partition', partitionForUrl(tab.url));
+    view.setAttribute('src', tab.url);
+    nativeViewRef.current = view;
+    nativeReadyRef.current = false;
+    pendingNativeUrlRef.current = null;
+
+    // El invitado no acepta llamadas hasta que emite `dom-ready`.
+    const sync = () => {
+      const url = view.getURL?.() || tab.url;
+      nativeNavigationRef.current?.(url, view.getTitle?.() || url);
+    };
+    const onReady = () => {
+      nativeReadyRef.current = true;
+      view.setZoomFactor?.(nativeZoomRef.current);
+      const pending = pendingNativeUrlRef.current;
+      pendingNativeUrlRef.current = null;
+      if (pending && pending !== view.getURL?.()) void view.loadURL?.(pending);
+    };
+    view.addEventListener('dom-ready', onReady);
+    view.addEventListener('did-navigate', sync);
+    view.addEventListener('did-navigate-in-page', sync);
+    view.addEventListener('page-title-updated', sync);
+
+    host.replaceChildren(view);
+
+    return () => {
+      view.removeEventListener('dom-ready', onReady);
+      view.removeEventListener('did-navigate', sync);
+      view.removeEventListener('did-navigate-in-page', sync);
+      view.removeEventListener('page-title-updated', sync);
+      host.replaceChildren();
+      nativeViewRef.current = null;
+      nativeReadyRef.current = false;
+      pendingNativeUrlRef.current = null;
+    };
+    // La página sobrevive a su propia navegación: solo se recrea con otra pestaña
+    // o al salir del modo NATIVO.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeViewActive, tab?.id]);
+
+  // El estado de React sigue mandando: `goto`, historial y enlaces externos
+  // cambian la URL de la pestaña y la página la carga en su sitio.
+  useEffect(() => {
+    const view = nativeViewRef.current;
+    if (!nativeViewActive || !view || !tab?.url) return;
+    if (!nativeReadyRef.current) {
+      pendingNativeUrlRef.current = tab.url;
+      return;
+    }
+    if (view.getURL?.() === tab.url) return;
+    void view.loadURL?.(tab.url);
+  }, [nativeViewActive, tab?.id, tab?.url]);
+
+  // El invitado no hereda el `zoom` CSS de la superficie: se le aplica aparte.
+  useEffect(() => {
+    if (!nativeViewActive || !nativeReadyRef.current) return;
+    nativeViewRef.current?.setZoomFactor?.(zoom);
+  }, [nativeViewActive, zoom]);
 
   const applyProxiedCosmetics = useCallback(async () => {
     if (!usesProxy || !tab?.url) return;
@@ -988,7 +1102,53 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
 
       {/* Page */}
       <div className="relative min-h-0 flex-1">
-        {!online ? (
+        {commandNotice ? (
+          <aside
+            role="status"
+            aria-live="polite"
+            data-testid="web-command-notice"
+            className="absolute bottom-3 left-3 right-3 z-30 border px-2.5 py-2 font-mono shadow-lg md:left-auto md:right-4 md:max-w-[520px]"
+            style={{
+              borderColor: theme.accent,
+              backgroundColor: theme.bg,
+              color: theme.text,
+              boxShadow: `0 0 0 1px ${theme.accent}33`,
+            }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <span
+                className="text-[9px] font-bold uppercase tracking-[0.25em]"
+                style={{ color: theme.accent }}
+              >
+                {t('browser.commandNotice')}
+              </span>
+              <button
+                type="button"
+                onClick={() => onDismissCommandNotice?.()}
+                aria-label={t('browser.commandNoticeClose')}
+                className="cursor-pointer border px-1 text-[10px] leading-none hover:opacity-75"
+                style={{ borderColor: theme.border, color: theme.accent }}
+              >
+                ✕
+              </button>
+            </div>
+            <pre
+              className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px]"
+              style={{ color: commandNotice.type === 'stderr' ? '#f87171' : theme.text }}
+            >
+              {commandNotice.output}
+            </pre>
+          </aside>
+        ) : null}
+        {nativeViewActive ? (
+          <div
+            ref={nativeContainerRef}
+            className="h-full w-full"
+            style={{ backgroundColor: '#0b0f0e' }}
+            aria-label={t('browser.modeNative')}
+            data-e2e="native-browser-container"
+          />
+        ) : !online ? (
           <SignalLostScene
             theme={theme}
             variant="offline"
@@ -1235,7 +1395,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
         style={{ backgroundColor: theme.cardBg, borderColor: theme.border }}
       >
         <div
-          className="flex shrink-0 items-center overflow-hidden rounded-xs border"
+          className="flex shrink-0 items-center rounded-xs border"
           style={{ borderColor: theme.border }}
           role="group"
           aria-label={t('browser.navControls')}
@@ -1361,6 +1521,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
                   style={{ backgroundColor: theme.cardBg, borderColor: theme.border, color: theme.text }}
                   role="dialog"
                   aria-label={t('browser.historyTitle')}
+                  data-testid="web-history-menu"
                 >
                   <div
                     className="flex items-center justify-between border-b px-2 py-1 text-[9px] uppercase tracking-wide opacity-55"
@@ -1645,7 +1806,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
             style={{ borderColor: theme.border }}
             title={t('browser.pageModeTitle')}
           >
-            {PAGE_MODES.map((option) => (
+            {PAGE_MODES.filter((option) => option.id !== 'native' || nativeBrowserAvailable).map((option) => (
               <button
                 key={option.id}
                 type="button"

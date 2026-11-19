@@ -35,7 +35,7 @@ export interface ThemeConfig {
 export type TabKind = 'web' | 'terminal';
 
 /** How a page is painted: the site as-is, the retro dark sheet, or readable text only */
-export type PageMode = 'real' | 'dark' | 'text';
+export type PageMode = 'real' | 'dark' | 'text' | 'native';
 
 export interface TerminusSearchResult {
   title: string;
@@ -156,6 +156,8 @@ export interface TerminalLogEntry {
   interactiveFiles?: InteractiveFileItem[];
   webpage?: WebpagePayload;
   notification?: TerminalNotification;
+  /** Also surface this output as a notice over the browser surface. */
+  notice?: boolean;
 }
 
 export interface Bookmark {
@@ -272,6 +274,15 @@ export interface TerminusDesktopApi {
   /** Downloads, verifies and runs the published installer; never opens a browser. */
   installUpdate?(): Promise<UpdateInstallResult>;
   onUpdateProgress?(listener: (progress: UpdateProgress) => void): () => void;
+}
+
+/**
+ * Real Chromium page embedded in the DOM by the desktop shell; absent in a
+ * normal browser tab. The page itself lives in a `<webview>` element, so this
+ * bridge only announces that the capability exists.
+ */
+export interface TerminusNativeBrowser {
+  available: boolean;
 }
 
 export interface FrameContextMenuEvent {
@@ -435,6 +446,7 @@ export interface TerminusFsApi {
 declare global {
   interface Window {
     terminusDesktop?: TerminusDesktopApi;
+    terminusNative?: TerminusNativeBrowser;
     terminusShell?: TerminusShellApi;
     terminusFs?: TerminusFsApi;
     terminusPty?: TerminusPtyApi;

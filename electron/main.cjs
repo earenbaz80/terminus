@@ -16,6 +16,8 @@ const {
   PARTIAL_SUFFIX,
 } = require('./updates.cjs');
 const { startForwardProxy } = require('./forwardProxy.cjs');
+const { registerNativeGuests, listNativeSessions } = require('./nativeBrowser.cjs');
+const { isWebUrl, isNativePartition } = require('./nativeBrowserPolicy.cjs');
 const { execFileSync, spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
 const fs = require('node:fs');
@@ -1512,6 +1514,20 @@ async function createArchiveRequest(owner, request) {
 }
 
 function registerWindowIpc() {
+  registerNativeGuests({
+    getWindow: () => mainWindow,
+    onSessionCreated: (siteSession) => {
+      if (!adblockEnabled) return undefined;
+      if (adblockBlocker) {
+        enableNetworkBlockingInSession(siteSession, adblockBlocker);
+        return undefined;
+      }
+      return initializeAdblock().then((blocker) => {
+        if (blocker) enableNetworkBlockingInSession(siteSession, blocker);
+      });
+    },
+  });
+
   ipcMain.on('terminus:window:minimize', (event) => {
     windowForEvent(event)?.minimize();
   });
@@ -1611,9 +1627,13 @@ function registerWindowIpc() {
     try {
       if (adblockEnabled) {
         const blocker = await initializeAdblock();
-        if (blocker) blocker.enableBlockingInSession(session.defaultSession);
+        if (blocker) {
+          blocker.enableBlockingInSession(session.defaultSession);
+          enableAdblockForNativeSessions(blocker);
+        }
       } else if (adblockBlocker) {
         adblockBlocker.disableBlockingInSession(session.defaultSession);
+        disableAdblockForNativeSessions();
       }
     } catch (error) {
       console.warn('[Terminus] No se pudo aplicar el bloqueo de publicidad.', error);
@@ -1810,6 +1830,39 @@ function isBlockedSubframeNavigation(rawUrl, appOrigin) {
   }
 }
 
+// Ghostery registra sus handlers IPC globales una sola vez: llamar a
+// enableBlockingInSession en una segunda sesión lanza «second handler» antes de
+// enganchar webRequest. Para las particiones por sitio usamos el mismo motor y
+// enganchamos el bloqueo de red directamente en cada sesión.
+const nativeBlockedSessions = new WeakSet();
+
+function enableNetworkBlockingInSession(siteSession, blocker) {
+  if (!blocker || nativeBlockedSessions.has(siteSession)) return;
+  siteSession.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, blocker.onBeforeRequest);
+  siteSession.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, blocker.onHeadersReceived);
+  nativeBlockedSessions.add(siteSession);
+}
+
+function disableNetworkBlockingInSession(siteSession) {
+  if (!nativeBlockedSessions.has(siteSession)) return;
+  siteSession.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (_details, callback) => callback({}));
+  siteSession.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, (_details, callback) => callback({}));
+  nativeBlockedSessions.delete(siteSession);
+}
+
+function enableAdblockForNativeSessions(blocker) {
+  if (!blocker) return;
+  for (const siteSession of listNativeSessions()) {
+    enableNetworkBlockingInSession(siteSession, blocker);
+  }
+}
+
+function disableAdblockForNativeSessions() {
+  for (const siteSession of listNativeSessions()) {
+    disableNetworkBlockingInSession(siteSession);
+  }
+}
+
 async function initializeAdblock() {
   if (!adblockEnabled) return null;
   if (adblockBlocker) return adblockBlocker;
@@ -1881,6 +1934,8 @@ function createWindow(appUrl) {
       nodeIntegrationInSubFrames: false,
       sandbox: true,
       spellcheck: false,
+      // La página nativa es un <webview> del documento; sin esto no se pinta.
+      webviewTag: true,
     },
   });
 
@@ -1967,8 +2022,16 @@ function createWindow(appUrl) {
     console.warn(`[Terminus] Navegación de subframe bloqueada: ${url}`);
   });
 
-  mainWindow.webContents.on('will-attach-webview', (event) => {
-    event.preventDefault();
+  // La página nativa se incrusta en el DOM, así que se conecta solo con nuestras
+  // sesiones por sitio y con las garantías del resto del navegador: sin Node, con
+  // aislamiento de contexto y en sandbox. Cualquier otra incrustación se rechaza.
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    if (!isNativePartition(params.partition) || !isWebUrl(params.src)) event.preventDefault();
   });
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl) => {

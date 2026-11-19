@@ -69,6 +69,12 @@ contextBridge.exposeInMainWorld('terminusDesktop', {
   onUpdateProgress: (callback) => subscribe(UPDATE_PROGRESS_CHANNEL, callback),
 });
 
+// La página nativa es un <webview> del propio documento (main habilita
+// webviewTag): la superficie no necesita ningún canal para dibujarla.
+contextBridge.exposeInMainWorld('terminusNative', {
+  available: true,
+});
+
 contextBridge.exposeInMainWorld('terminusShell', {
   platform: process.platform,
   available: true,

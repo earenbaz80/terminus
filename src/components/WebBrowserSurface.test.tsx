@@ -5,7 +5,7 @@ import { THEMES } from '../utils/themes';
 import { RECENT_SEARCHES_STORAGE_KEY } from '../utils/recentSearches';
 import { BOOT_ASCII } from '../utils/bootBanner';
 import { HOME_FOCUS_EVENT } from '../utils/commandProcessor';
-import type { BrowserTab, TerminusDesktopApi, TerminusSearchState } from '../types';
+import type { BrowserTab, TerminalLogEntry, TerminusDesktopApi, TerminusSearchState } from '../types';
 
 const theme = THEMES['cyberpunk-obsidian'];
 
@@ -60,6 +60,8 @@ type SurfaceOptions = {
   globalHistory?: string[];
   onSetZoom?: (zoom: number) => void;
   onPageStatus?: (status: number) => void;
+  commandNotice?: TerminalLogEntry | null;
+  onDismissCommandNotice?: () => void;
 };
 
 const surfaceElement = (tab: BrowserTab, onCommand: (command: string) => void, options: SurfaceOptions) => (
@@ -75,6 +77,8 @@ const surfaceElement = (tab: BrowserTab, onCommand: (command: string) => void, o
     onSetZoom={options.onSetZoom}
     onPageStatus={options.onPageStatus}
     latencyMs={18}
+    commandNotice={options.commandNotice}
+    onDismissCommandNotice={options.onDismissCommandNotice}
   />
 );
 
@@ -88,6 +92,81 @@ const renderSurface = (tab: BrowserTab = blankTab, options: SurfaceOptions = {})
 };
 
 describe('WebBrowserSurface', () => {
+  it('embeds the native page as a webview that keeps its slot while panels open', async () => {
+    window.terminusNative = { available: true };
+
+    try {
+      const view = render(surfaceElement(pageTab, vi.fn(), {}));
+      const host = document.querySelector<HTMLElement>('[data-e2e="native-browser-container"]');
+      expect(host).toBeTruthy();
+      await waitFor(() => expect(host?.querySelector('webview')).toBeTruthy());
+      const native = host?.querySelector('webview') as HTMLElement;
+
+      expect(native.getAttribute('src')).toBe('https://example.com');
+      expect(native.getAttribute('partition')).toBe('persist:terminus-site-example.com');
+      expect(native.className).toContain('h-full');
+
+      // Un panel abierto no mueve ni recorta la página: se dibuja por encima.
+      fireEvent.keyDown(window, { key: 'f', ctrlKey: true });
+      await waitFor(() => expect(document.querySelector('[data-e2e="find-bar"]')).toBeTruthy());
+      view.rerender(
+        surfaceElement(pageTab, vi.fn(), {
+          commandNotice: {
+            id: 'notice_native',
+            timestamp: '12:00:00',
+            type: 'stderr',
+            output: 'La traducción no está configurada.',
+          },
+        })
+      );
+      expect(document.querySelector('[data-e2e="native-browser-container"]')).toBe(host);
+      expect(host?.querySelector('webview')).toBe(native);
+      expect(native.getAttribute('style')).toBeNull();
+    } finally {
+      delete window.terminusNative;
+    }
+  });
+
+  it('recreates the native page per tab and returns to the frame in other modes', async () => {
+    window.terminusNative = { available: true };
+
+    try {
+      const view = renderSurface(pageTab);
+      await waitFor(() => expect(document.querySelector('webview')).toBeTruthy());
+      const first = document.querySelector('webview');
+
+      view.rerender({ ...pageTab, id: 'page_tab_b' });
+      await waitFor(() => expect(document.querySelector('webview')).not.toBe(first));
+      expect(document.querySelector('webview')).toBeTruthy();
+
+      view.rerender({ ...pageTab, id: 'page_tab_b', viewMode: 'real' });
+      await waitFor(() => expect(document.querySelector('webview')).toBeNull());
+      expect(document.querySelector('iframe')).toBeTruthy();
+    } finally {
+      delete window.terminusNative;
+    }
+  });
+
+  it('shows a command notice over the page and lets it be dismissed', () => {
+    const onDismissCommandNotice = vi.fn();
+    renderSurface(blankTab, {
+      commandNotice: {
+        id: 'notice_1',
+        timestamp: '12:00:00',
+        type: 'stderr',
+        output: 'La traducción no está configurada. Definí TERMINUS_TRANSLATE_URL.',
+      },
+      onDismissCommandNotice,
+    });
+
+    const notice = screen.getByTestId('web-command-notice');
+    expect(notice.textContent).toContain('La traducción no está configurada');
+    expect(within(notice).getByText('SALIDA DE COMANDO')).toBeTruthy();
+
+    fireEvent.click(within(notice).getByRole('button', { name: 'Cerrar aviso de comando' }));
+    expect(onDismissCommandNotice).toHaveBeenCalledTimes(1);
+  });
+
   it('floats DOSY frameless above the browser chrome as a sibling of the address form', () => {
     renderSurface();
 
