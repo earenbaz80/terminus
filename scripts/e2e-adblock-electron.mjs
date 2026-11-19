@@ -317,6 +317,10 @@ try {
   // cosmetics for the local fixture. A public domain exercises the real path:
   // the proxy iframe keeps the app URL, so the chrome must fetch the remote
   // cosmetics and send them to the proxied frame.
+  // A page now opens in REAL, and the cosmetics and the CSP below belong to the
+  // proxy view: choose OSCURO explicitly instead of relying on the old default.
+  await page.getByRole('button', { name: 'OSCURO', exact: true }).click();
+  await page.waitForTimeout(500);
   await address.click();
   await address.fill('https://example.com/');
   await address.press('Enter');
