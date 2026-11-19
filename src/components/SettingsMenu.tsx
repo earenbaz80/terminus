@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Blocks, Languages, Menu, Network, ShieldCheck, Volume2, VolumeX, X } from 'lucide-react';
+import { Blocks, Download, Languages, Menu, Network, RefreshCw, ShieldCheck, Volume2, VolumeX, X } from 'lucide-react';
 import { ThemeConfig, ThemeId } from '../types';
 import { THEMES } from '../utils/themes';
 import { themeName } from '../i18n/themes';
@@ -13,6 +13,15 @@ import {
   readNetworkState,
   NetworkState,
 } from '../utils/networkPreference';
+import {
+  applyUpdateMode,
+  checkForUpdates,
+  installUpdate,
+  onUpdateProgress,
+  readUpdateState,
+  UpdateMode,
+  UpdateState,
+} from '../utils/updatePreference';
 
 interface SettingsMenuProps {
   theme: ThemeConfig;
@@ -55,7 +64,29 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
     appliesLive: false,
   });
   const [networkBusy, setNetworkBusy] = useState(false);
+  const [updates, setUpdates] = useState<UpdateState>({
+    mode: 'auto',
+    available: false,
+    currentVersion: '',
+    lastCheck: null,
+  });
+  const [updatesBusy, setUpdatesBusy] = useState(false);
+  const [updatePhase, setUpdatePhase] = useState<string | null>(null);
+  const [updatePercent, setUpdatePercent] = useState<number | null>(null);
+  const [installError, setInstallError] = useState('');
   const wavInputRef = useRef<HTMLInputElement>(null);
+
+  // The download and install run in the main process, so the menu follows the
+  // phases it reports instead of guessing from the click.
+  useEffect(() => {
+    return onUpdateProgress((progress) => {
+      setUpdatePhase(progress.phase);
+      setUpdatePercent(
+        progress.phase === 'downloading' && typeof progress.percent === 'number' ? progress.percent : null
+      );
+      setInstallError(progress.phase === 'error' ? progress.message || '' : '');
+    });
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -65,6 +96,9 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
     });
     void readNetworkState().then((state) => {
       if (active) setNetwork(state);
+    });
+    void readUpdateState().then((state) => {
+      if (active) setUpdates(state);
     });
     return () => {
       active = false;
@@ -90,6 +124,58 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
     setNetwork(state);
     setNetworkBusy(false);
   };
+
+  const changeUpdateMode = async (mode: UpdateMode) => {
+    if (updatesBusy || !updates.available) return;
+    soundEffects.playKeyClick();
+    setUpdatesBusy(true);
+    setUpdates(await applyUpdateMode(mode));
+    setUpdatesBusy(false);
+  };
+
+  const checkUpdatesNow = async () => {
+    if (updatesBusy || !updates.available) return;
+    soundEffects.playKeyClick();
+    setUpdatesBusy(true);
+    setUpdates(await checkForUpdates());
+    setUpdatesBusy(false);
+  };
+
+  const installNow = async () => {
+    if (updatesBusy || !updates.available) return;
+    soundEffects.playKeyClick();
+    setUpdatesBusy(true);
+    setInstallError('');
+    setUpdatePhase('downloading');
+    setUpdatePercent(null);
+    const result = await installUpdate();
+    if (result.status === 'error') {
+      setUpdatePhase('error');
+      setInstallError(result.message || '');
+    }
+    setUpdatesBusy(false);
+  };
+
+  const updatePhaseLabel =
+    updatePhase === 'downloading'
+      ? `${t('settings.updateDownloading')}${updatePercent === null ? '' : ` ${updatePercent} %`}`
+      : updatePhase === 'verifying'
+        ? t('settings.updateVerifying')
+        : updatePhase === 'installing'
+          ? t('settings.updateInstalling')
+          : '';
+
+  const updateStatus = (() => {
+    const check = updates.lastCheck;
+    if (!check) return '';
+    if (check.status === 'available') {
+      return t('settings.updateAvailable', { version: check.latestVersion });
+    }
+    if (check.status === 'current') {
+      return t('settings.updateCurrent', { version: check.currentVersion || updates.currentVersion });
+    }
+    return t('settings.updateError');
+  })();
 
   const sectionTitle = (label: string) => (
     <div className="mb-1 text-[9px] uppercase tracking-[0.16em] opacity-50">{label}</div>
@@ -354,6 +440,81 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
               )}
               {network.available && !network.appliesLive && (
                 <p className="mt-1 text-[9px] leading-4 opacity-45">{t('settings.networkRestart')}</p>
+              )}
+            </section>
+
+            <section
+              aria-label={t('settings.updates')}
+              className="mb-3 border-t pt-2"
+              style={{ borderColor: theme.border }}
+            >
+              {sectionTitle(t('settings.updates'))}
+              <label
+                className="mb-1 block text-[9px] uppercase tracking-wide opacity-50"
+                htmlFor="terminus-update-mode"
+              >
+                {t('settings.updateMode')}
+              </label>
+              <select
+                id="terminus-update-mode"
+                value={updates.mode}
+                onChange={(event) => void changeUpdateMode(event.target.value as UpdateMode)}
+                disabled={!updates.available || updatesBusy}
+                className="mb-2 w-full border px-2 py-1 text-[11px] cursor-pointer focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ backgroundColor: theme.bg, borderColor: theme.border, color: theme.accent }}
+              >
+                <option value="auto">{t('settings.updatesAuto')}</option>
+                <option value="manual">{t('settings.updatesManual')}</option>
+              </select>
+
+              <button
+                type="button"
+                onClick={() => void checkUpdatesNow()}
+                disabled={!updates.available || updatesBusy}
+                className="mb-1 flex w-full items-center justify-center gap-1.5 border px-2 py-1.5 cursor-pointer hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ borderColor: theme.border, color: theme.text }}
+              >
+                <RefreshCw
+                  className={`h-3 w-3 shrink-0 ${updatesBusy ? 'animate-spin' : ''}`}
+                  style={{ color: theme.accent }}
+                />
+                {updatesBusy ? t('settings.checking') : t('settings.checkNow')}
+              </button>
+
+              <p className="text-[9px] leading-4 opacity-45">
+                {updates.mode === 'auto' ? t('settings.updatesAutoHint') : t('settings.updatesManualHint')}
+              </p>
+              {updateStatus && (
+                <p
+                  className="mt-1 text-[9px] leading-4"
+                  style={{ color: updates.lastCheck?.status === 'available' ? theme.accent : theme.text }}
+                  title={updates.lastCheck?.message}
+                >
+                  {updateStatus}
+                </p>
+              )}
+              {updates.available && updates.lastCheck?.status === 'available' && (
+                <button
+                  type="button"
+                  onClick={() => void installNow()}
+                  disabled={updatesBusy || updatePhase === 'installing'}
+                  className="mt-1 flex w-full items-center justify-center gap-1.5 border px-2 py-1.5 cursor-pointer hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ borderColor: theme.accent, color: theme.accent }}
+                >
+                  <Download className="h-3 w-3 shrink-0" />
+                  {t('settings.installUpdate', { version: updates.lastCheck.latestVersion })}
+                </button>
+              )}
+              {updatePhaseLabel && (
+                <p className="mt-1 text-[9px] leading-4 opacity-60">{updatePhaseLabel}</p>
+              )}
+              {installError && (
+                <p className="mt-1 text-[9px] leading-4" style={{ color: '#f87171' }} title={installError}>
+                  {t('settings.updateInstallError')}
+                </p>
+              )}
+              {!updates.available && (
+                <p className="mt-1 text-[9px] leading-4 opacity-45">{t('settings.updatesDesktopOnly')}</p>
               )}
             </section>
 
