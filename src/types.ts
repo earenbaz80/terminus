@@ -2,6 +2,13 @@
  * Terminus - Type Definitions
  */
 
+import type {
+  UpdateInstallResult,
+  UpdateMode,
+  UpdateProgress,
+  UpdateState,
+} from './utils/updatePreference';
+
 export type ThemeId =
   | 'monochrome-green'
   | 'amber-crt'
@@ -258,6 +265,13 @@ export interface TerminusDesktopApi {
   /** Private-network policy owned by the Electron main process. */
   getNetworkState?(): Promise<NetworkPolicyState>;
   setAllowPrivateNetworks?(allowPrivate: boolean): Promise<NetworkPolicyState>;
+  /** Update check owned by the Electron main process; it never installs anything. */
+  getUpdateState?(): Promise<UpdateState>;
+  setUpdateMode?(mode: UpdateMode): Promise<UpdateState>;
+  checkForUpdates?(): Promise<UpdateState>;
+  /** Downloads, verifies and runs the published installer; never opens a browser. */
+  installUpdate?(): Promise<UpdateInstallResult>;
+  onUpdateProgress?(listener: (progress: UpdateProgress) => void): () => void;
 }
 
 export interface FrameContextMenuEvent {
