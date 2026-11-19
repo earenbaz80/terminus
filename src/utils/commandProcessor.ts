@@ -48,6 +48,8 @@ import {
   TERMINUS_SEARCH_URL,
 } from './terminusSearch';
 import type { ConsoleKey } from '../i18n/console';
+import { detectLanguage, extractMainContent, summarizeText } from './reading';
+import { chunkText, MAX_TRANSLATE_CHUNKS } from './translation';
 
 export interface CommandContext {
   locale: Locale;
@@ -921,6 +923,143 @@ Comandos de voz recomendados:
     }
   }
 
+  // 4b. RESUMIR / SUMMARY (extractivo y local, sin enviar la página a nadie)
+  if (
+    primaryCmd === 'resumir' ||
+    primaryCmd === 'resumen' ||
+    primaryCmd === 'summarize' ||
+    primaryCmd === 'summary'
+  ) {
+    const currentTab = ctx.tabs.find((t) => t.id === ctx.activeTabId);
+    const raw = currentTab?.readerText || currentTab?.content || '';
+    const sourceText = /<[a-z][\s\S]*>/i.test(raw) ? extractMainContent(raw) : raw;
+
+    if (!currentTab || sourceText.trim().length < 120) {
+      return {
+        id: `cmd_${Date.now()}`,
+        timestamp,
+        type: 'stderr',
+        output: ctx.tc('out.noTextForSummary'),
+      };
+    }
+
+    const summary = summarizeText(sourceText, 5);
+    const sentenceCount = summary.split(/(?<=[.!?…])\s+/).filter(Boolean).length;
+
+    return {
+      id: `cmd_${Date.now()}`,
+      timestamp,
+      type: 'system',
+      output: ctx.tc('out.summaryHeader', { count: sentenceCount, summary }),
+    };
+  }
+
+  // 4c. IDIOMA / LANGUAGE DETECTION
+  if (primaryCmd === 'idioma' || primaryCmd === 'lang' || primaryCmd === 'language') {
+    const currentTab = ctx.tabs.find((t) => t.id === ctx.activeTabId);
+    const raw = currentTab?.readerText || currentTab?.content || '';
+    const sourceText = /<[a-z][\s\S]*>/i.test(raw) ? extractMainContent(raw) : raw;
+    const guess = detectLanguage(sourceText);
+
+    return {
+      id: `cmd_${Date.now()}`,
+      timestamp,
+      type: 'system',
+      output: ctx.tc('out.languageHeader', {
+        language: guess.name,
+        code: guess.code.toUpperCase(),
+        confidence: Math.round(guess.confidence * 100),
+      }),
+    };
+  }
+
+  // 4d. TRADUCIR / TRANSLATE (el proveedor y la clave viven en el servidor)
+  if (primaryCmd === 'traducir' || primaryCmd === 'translate') {
+    const currentTab = ctx.tabs.find((t) => t.id === ctx.activeTabId);
+    const raw = currentTab?.readerText || currentTab?.content || '';
+    const sourceText = /<[a-z][\s\S]*>/i.test(raw) ? extractMainContent(raw) : raw;
+
+    if (!currentTab || sourceText.trim().length < 40) {
+      return {
+        id: `cmd_${Date.now()}`,
+        timestamp,
+        type: 'stderr',
+        output: ctx.tc('out.translateNoText'),
+      };
+    }
+
+    const guess = detectLanguage(sourceText);
+    const requested = (args[0] || '').toLowerCase();
+    const target = /^[a-z]{2}$/.test(requested)
+      ? requested
+      : guess.code === 'en'
+        ? 'es'
+        : 'en';
+    const chunks = chunkText(sourceText, 4000).slice(0, MAX_TRANSLATE_CHUNKS);
+
+    try {
+      const parts: string[] = [];
+      for (const chunk of chunks) {
+        const response = await fetch('/api/translate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: chunk,
+            source: guess.code !== 'und' ? guess.code : undefined,
+            target,
+          }),
+        });
+        const data = (await response.json().catch(() => ({}))) as {
+          text?: unknown;
+          message?: string;
+        };
+
+        if (response.status === 503) {
+          return {
+            id: `cmd_${Date.now()}`,
+            timestamp,
+            type: 'stderr',
+            output: ctx.tc('out.translateNotConfigured'),
+          };
+        }
+        if (!response.ok || typeof data.text !== 'string') {
+          return {
+            id: `cmd_${Date.now()}`,
+            timestamp,
+            type: 'stderr',
+            output: ctx.tc('out.translateError', {
+              message: data.message || `HTTP ${response.status}`,
+            }),
+          };
+        }
+        parts.push(data.text);
+      }
+
+      const translated = parts.join(' ');
+      return {
+        id: `cmd_${Date.now()}`,
+        timestamp,
+        type: 'system',
+        notice: true,
+        output: ctx.tc('out.translateHeader', {
+          target: target.toUpperCase(),
+          chunks: parts.length,
+          text: translated.slice(0, 1500),
+          truncated: translated.length > 1500 ? ctx.tc('out.translateTruncated') : '',
+        }),
+      };
+    } catch (error) {
+      return {
+        id: `cmd_${Date.now()}`,
+        timestamp,
+        type: 'stderr',
+        output: ctx.tc('out.translateError', {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      };
+    }
+  }
+
   // 5. READER MODE
   if (primaryCmd === 'reader') {
     const currentTab = ctx.tabs.find((t) => t.id === ctx.activeTabId);
@@ -956,6 +1095,13 @@ Comandos de voz recomendados:
       cleanText = currentTab.readerText || cleanText;
     }
 
+    // El extractor principal descarta menús, cabeceras y pies; se prefiere
+    // cuando aporta al menos la mitad del texto que ya teníamos.
+    if (/<[a-z][\s\S]*>/i.test(rawHtml)) {
+      const mainContent = extractMainContent(rawHtml);
+      if (mainContent.length > cleanText.length * 0.5) cleanText = mainContent;
+    }
+
     if (!cleanText) {
       cleanText = currentTab.readerText || ctx.tc('out.noCleanText');
     }
@@ -968,15 +1114,25 @@ Comandos de voz recomendados:
       )
     );
 
+    const guess = detectLanguage(cleanText);
+    const summary = cleanText.length > 240 ? summarizeText(cleanText, 3) : '';
+
     return {
       id: `cmd_${Date.now()}`,
       timestamp,
       type: 'system',
-      output: ctx.tc('out.readerActivated', {
-        title: currentTab.title || currentTab.url,
-        text: cleanText.slice(0, 800),
-        truncated: cleanText.length > 800 ? ctx.tc('out.readerTruncated') : '',
-      }),
+      output:
+        ctx.tc('out.readerActivated', {
+          title: currentTab.title || currentTab.url,
+          text: cleanText.slice(0, 800),
+          truncated: cleanText.length > 800 ? ctx.tc('out.readerTruncated') : '',
+        }) +
+        ctx.tc('out.readerLanguage', {
+          language: guess.name,
+          code: guess.code.toUpperCase(),
+          confidence: Math.round(guess.confidence * 100),
+        }) +
+        (summary ? ctx.tc('out.readerSummary', { summary }) : ''),
     };
   }
 

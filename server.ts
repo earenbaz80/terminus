@@ -23,6 +23,7 @@ import { decodeHtmlEntities } from './src/utils/htmlEntities';
 import { htmlToRetroMarkup } from './src/utils/retroHtml';
 import { pythonRunnerPage, PYTHON_RUNNER_CSP } from './src/utils/pythonRunnerPage';
 import { APP_VERSION } from './src/utils/version';
+import { MAX_TRANSLATE_CHARS, translateText } from './src/utils/translation';
 
 /**
  * Converts any HTML document into readable plain text, without relying on <p>/<h*> markup.
@@ -802,6 +803,46 @@ async function startServer() {
     } catch (err: any) {
       return res.status(500).json({ error: 'Search failed', message: err.message });
     }
+  });
+
+  // Traducción de página: la URL y la clave del proveedor viven solo aquí, en
+  // variables de entorno. El cliente nunca recibe ninguna de las dos.
+  app.post('/api/translate', async (req, res) => {
+    const text = typeof req.body?.text === 'string' ? req.body.text : '';
+    const target = typeof req.body?.target === 'string' ? req.body.target.trim().toLowerCase() : '';
+    const source = typeof req.body?.source === 'string' ? req.body.source.trim().toLowerCase() : '';
+
+    if (!text.trim()) {
+      return res.status(400).json({ error: 'missing_text', message: 'Falta el texto a traducir.' });
+    }
+    if (text.length > MAX_TRANSLATE_CHARS) {
+      return res.status(413).json({
+        error: 'text_too_long',
+        message: `El texto supera el límite de ${MAX_TRANSLATE_CHARS} caracteres.`,
+      });
+    }
+    if (!/^[a-z]{2}$/.test(target)) {
+      return res.status(400).json({
+        error: 'invalid_target',
+        message: 'El idioma destino debe ser un código de dos letras (ej. en, es).',
+      });
+    }
+
+    const result = await translateText(
+      fetch,
+      {
+        url: process.env.TERMINUS_TRANSLATE_URL,
+        apiKey: process.env.TERMINUS_TRANSLATE_API_KEY,
+      },
+      { text, source: /^[a-z]{2}$/.test(source) ? source : undefined, target }
+    );
+
+    if (!result.ok) {
+      const status = result.reason === 'not_configured' ? 503 : 502;
+      return res.status(status).json({ error: result.reason, message: result.message });
+    }
+
+    return res.json({ ok: true, text: result.text, target });
   });
 
   // Real DNS lookup endpoint

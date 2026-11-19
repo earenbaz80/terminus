@@ -628,6 +628,11 @@ export default function App() {
       if (resultLog && (resultLog.output || resultLog.interactiveFiles)) {
         setLogs((prev) => [...prev, resultLog]);
       }
+
+      // The terminal keeps the full log; the web surface needs its own visible notice.
+      if (resultLog?.output && (resultLog.type === 'stderr' || resultLog.notice)) {
+        setWebNotice(resultLog);
+      }
     },
           [tabs, activeTabId, currentThemeId, crtEnabled, isMuted, bookmarks, scripts, extensions, keybindings, security, metrics, activityLogs, currentPath, fileSystem, setCurrentPath, setLogs, setScripts, tc, locale]
   );
