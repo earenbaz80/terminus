@@ -273,7 +273,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   const [commandHistory, setCommandHistory] = useState<string[]>(() => getPersistedCommandHistory());
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [draftCommand, setDraftCommand] = useState('');
-  const [mode, setMode] = useState<PageMode>('dark');
+  const [mode, setMode] = useState<PageMode>('real');
   const [savedModes, setSavedModes] = useState<Record<string, PageMode>>(() => loadModeMap());
   const [savedOpen, setSavedOpen] = useState(false);
   const [commandsOpen, setCommandsOpen] = useState(false);
@@ -386,10 +386,11 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     return api.onFindShortcut(() => setFindOpen(true));
   }, []);
 
-  // The tab's own choice wins; otherwise a saved site preference, and finally dark by default
+  // The tab's own choice wins; otherwise a saved site preference, and finally the
+  // real page by default: dark and text are opt-in per site.
   useEffect(() => {
     const host = hostOf(tab?.url ?? '');
-    setMode(tab?.viewMode ?? (host ? loadModeMap()[host] : undefined) ?? 'dark');
+    setMode(tab?.viewMode ?? (host ? loadModeMap()[host] : undefined) ?? 'real');
   }, [tab?.id, tab?.url, tab?.viewMode]);
 
   // Mirror the shared history so ↑/↓ walks the same commands as the terminal

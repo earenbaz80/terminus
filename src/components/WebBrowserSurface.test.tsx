@@ -306,6 +306,8 @@ describe('WebBrowserSurface', () => {
 
   it('keeps a frameable tab on the proxy origin while OSCURO is selected', () => {
     const { onCommand } = renderSurface({ ...pageTab, frameable: true });
+    // A page opens in REAL; OSCURO is what moves a frameable tab to the proxy.
+    fireEvent.click(screen.getByRole('button', { name: 'OSCURO' }));
     const frame = document.querySelector('iframe');
     if (!frame) throw new Error('No se encontró el iframe de la página.');
 
