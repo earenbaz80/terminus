@@ -6,6 +6,15 @@ const { parse: parseDomain } = require('tldts-experimental');
 const { isBlockedAdUrl } = require('./adblock.cjs');
 const { isPrivateAddress, isPrivateTargetUrl } = require('./networkPolicy.cjs');
 const { envDecidesPrivateNetworks } = require('../shared/networkPolicyEnv.cjs');
+const {
+  checkForUpdate,
+  cleanupUpdateAssets,
+  downloadToFile,
+  isUpdateMode,
+  matchesSha256Digest,
+  parseSums,
+  PARTIAL_SUFFIX,
+} = require('./updates.cjs');
 const { startForwardProxy } = require('./forwardProxy.cjs');
 const { execFileSync, spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
@@ -123,6 +132,210 @@ const networkStateSnapshot = () => ({
 });
 
 loadNetworkState();
+
+// Update checks ask for the latest published release and install nothing: the
+// build is unsigned and has no updater. `auto` checks once at startup, `manual`
+// only when the settings menu asks, and the result is what the menu reports.
+const UPDATE_STATE_FILENAME = 'update-state.json';
+let updateMode = 'auto';
+let lastUpdateCheck = null;
+let updateCheckInFlight = null;
+const updateStatePath = () => path.join(app.getPath('userData'), UPDATE_STATE_FILENAME);
+
+function readStoredUpdateMode() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(updateStatePath(), 'utf8'));
+    return isUpdateMode(parsed?.mode) ? parsed.mode : 'auto';
+  } catch {
+    return 'auto'; // No stored preference: keep the startup check.
+  }
+}
+
+function loadUpdateState() {
+  updateMode = readStoredUpdateMode();
+}
+
+async function persistUpdateState() {
+  try {
+    await fs.promises.writeFile(updateStatePath(), JSON.stringify({ mode: updateMode }), 'utf8');
+  } catch (error) {
+    console.warn('[Terminus] No se pudo guardar la preferencia de actualizaciones.', error);
+  }
+}
+
+const DENIED_UPDATE_STATE = { mode: 'manual', available: false, currentVersion: '', lastCheck: null };
+
+const updateStateSnapshot = () => ({
+  mode: updateMode,
+  available: true,
+  currentVersion: app.getVersion(),
+  lastCheck: lastUpdateCheck,
+});
+
+// One check at a time: the startup check and the menu button share the promise.
+function runUpdateCheck() {
+  if (!updateCheckInFlight) {
+    updateCheckInFlight = checkForUpdate({ currentVersion: app.getVersion() })
+      .then((result) => {
+        lastUpdateCheck = result;
+        logUpdate(
+          `Comprobación: ${result.status} (actual ${result.currentVersion}, publicada ${result.latestVersion || '—'})` +
+            (result.message ? ` · ${result.message}` : '')
+        );
+        return result;
+      })
+      .finally(() => {
+        updateCheckInFlight = null;
+      });
+  }
+  return updateCheckInFlight;
+}
+
+const UPDATE_ASSETS_DIRNAME = 'updates';
+let updateInstallInFlight = null;
+const updateAssetsDir = () => path.join(app.getPath('userData'), UPDATE_ASSETS_DIRNAME);
+const updateLogPath = () => path.join(updateAssetsDir(), 'update.log');
+
+// The packaged app has no console attached, so every step worth confirming is
+// appended to userData/updates/update.log with a timestamp. That file is the
+// evidence of a download, its hash and the hand-over to the installer.
+function logUpdate(message) {
+  const line = `${new Date().toISOString()} ${message}`;
+  console.info(`[Terminus] ${line}`);
+  try {
+    fs.mkdirSync(path.dirname(updateLogPath()), { recursive: true });
+    fs.appendFileSync(updateLogPath(), `${line}\n`, 'utf8');
+  } catch (error) {
+    console.warn('[Terminus] No se pudo escribir el log de actualización.', error);
+  }
+}
+
+const notifyUpdatePhase = (phase, extra = {}) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('terminus:updates:progress', { phase, ...extra });
+  }
+};
+
+// The installer cannot replace files the running app has open, so a detached
+// PowerShell waits for this process to exit, installs silently and relaunches.
+// Nothing is opened in a browser and no URL is passed from the renderer.
+function launchInstaller(installerPath) {
+  const processName = path.basename(process.execPath).replace(/\.exe$/i, '');
+  const installedExe = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Terminus', 'Terminus.exe');
+  const quote = (value) => `'${String(value).replace(/'/g, "''")}'`;
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$name = ${quote(processName)}`,
+    'while (Get-Process -Name $name -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 500 }',
+    `Start-Process -FilePath ${quote(installerPath)} -ArgumentList '/S' -Wait`,
+    `if (Test-Path -LiteralPath ${quote(installedExe)}) { Start-Process -FilePath ${quote(installedExe)} }`,
+  ].join('\r\n');
+
+  spawn(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-WindowStyle',
+      'Hidden',
+      '-EncodedCommand',
+      Buffer.from(script, 'utf16le').toString('base64'),
+    ],
+    { detached: true, stdio: 'ignore', windowsHide: true }
+  ).unref();
+}
+
+/** Download, verify against the published SHA-256 and hand over to the installer. */
+async function installUpdate() {
+  if (updateInstallInFlight) return updateInstallInFlight;
+
+  updateInstallInFlight = (async () => {
+    try {
+      if (!app.isPackaged) throw new Error('La actualización se instala solo desde la app empaquetada.');
+      if (lastUpdateCheck?.status !== 'available') throw new Error('No hay una actualización comprobada.');
+
+      const assets = lastUpdateCheck.assets;
+      if (!assets) throw new Error('La release no publica instalador y SHA256SUMS.txt con enlace https.');
+      logUpdate(`Instalando ${lastUpdateCheck.latestVersion}: ${assets.installer.name}`);
+
+      const directory = updateAssetsDir();
+      await fs.promises.mkdir(directory, { recursive: true });
+
+      // Installers from earlier versions would pile up in userData otherwise.
+      const cleanup = await cleanupUpdateAssets(directory);
+      if (cleanup.failed.length) {
+        console.warn(
+          `[Terminus] No se pudieron borrar instaladores anteriores: ${cleanup.failed.join(', ')}`
+        );
+      }
+
+      const headers = { 'User-Agent': `Terminus/${app.getVersion()}` };
+      const sumsPath = path.join(directory, 'SHA256SUMS.txt');
+      notifyUpdatePhase('downloading', { received: 0, total: 0, percent: 0 });
+      await downloadToFile({ url: assets.sums.url, destination: sumsPath, headers });
+      const sums = await fs.promises.readFile(sumsPath, 'utf8');
+
+      // The installer streams straight to a `.part` file and gets hashed as it
+      // writes, so the ~100 MB never sit in memory and a cut download is not left
+      // behind with the name of a real installer.
+      const installerPath = path.join(directory, assets.installer.name);
+      const partialPath = `${installerPath}${PARTIAL_SUFFIX}`;
+      let lastProgressAt = 0;
+      const download = await downloadToFile({
+        url: assets.installer.url,
+        destination: partialPath,
+        headers,
+        onProgress: (received, total) => {
+          const now = Date.now();
+          if (received !== total && now - lastProgressAt < 250) return;
+          lastProgressAt = now;
+          notifyUpdatePhase('downloading', {
+            received,
+            total,
+            percent: total > 0 ? Math.min(100, Math.round((received / total) * 100)) : null,
+          });
+        },
+      });
+
+      logUpdate(`Descargado ${assets.installer.name}: ${download.size} B, SHA-256 ${download.digest}`);
+
+      if (assets.installer.size && download.size !== assets.installer.size) {
+        throw new Error(
+          `El instalador descargado pesa ${download.size} B y la release anuncia ${assets.installer.size} B.`
+        );
+      }
+
+      notifyUpdatePhase('verifying');
+      const expected = parseSums(sums, assets.installer.name);
+      if (!expected) throw new Error(`SHA256SUMS.txt no trae la línea de ${assets.installer.name}.`);
+      const hashOk = matchesSha256Digest(download.digest, expected);
+      logUpdate(`SHA-256 esperado ${expected}: ${hashOk ? 'coincide' : 'no coincide'}`);
+      if (!hashOk) {
+        throw new Error('El instalador descargado no coincide con su SHA-256.');
+      }
+
+      await fs.promises.rm(installerPath, { force: true });
+      await fs.promises.rename(partialPath, installerPath);
+      logUpdate(`Instalador listo en ${installerPath}; lanzándolo y cerrando Terminus.`);
+
+      notifyUpdatePhase('installing');
+      launchInstaller(installerPath);
+      setTimeout(() => app.quit(), 800);
+      return { status: 'installing' };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logUpdate(`Error de actualización: ${message}`);
+      notifyUpdatePhase('error', { message });
+      return { status: 'error', message };
+    } finally {
+      updateInstallInFlight = null;
+    }
+  })();
+
+  return updateInstallInFlight;
+}
+
+loadUpdateState();
 let networkGuardOrigin = null;
 const dnsVerdictCache = new Map();
 const DNS_VERDICT_TTL_MS = 60_000;
@@ -1408,6 +1621,29 @@ function registerWindowIpc() {
     return { enabled: adblockEnabled, available: true };
   });
 
+  ipcMain.handle('terminus:updates:state', (event) =>
+    windowForEvent(event) ? updateStateSnapshot() : DENIED_UPDATE_STATE
+  );
+
+  ipcMain.handle('terminus:updates:set-mode', async (event, mode) => {
+    if (!windowForEvent(event)) return DENIED_UPDATE_STATE;
+    if (!isUpdateMode(mode) || mode === updateMode) return updateStateSnapshot();
+    updateMode = mode;
+    await persistUpdateState();
+    return updateStateSnapshot();
+  });
+
+  ipcMain.handle('terminus:updates:check', async (event) => {
+    if (!windowForEvent(event)) return DENIED_UPDATE_STATE;
+    await runUpdateCheck();
+    return updateStateSnapshot();
+  });
+
+  ipcMain.handle('terminus:updates:install', async (event) => {
+    if (!windowForEvent(event)) return { status: 'error', message: 'Origen no autorizado.' };
+    return installUpdate();
+  });
+
   ipcMain.handle('terminus:network:state', (event) =>
     windowForEvent(event) ? networkStateSnapshot() : DENIED_NETWORK_STATE
   );
@@ -1774,6 +2010,15 @@ if (!hasSingleInstanceLock) {
       const message = error instanceof Error ? error.message : String(error);
       dialog.showErrorBox('No se pudo iniciar Terminus', message);
       app.quit();
+    }
+
+    // The check never rejects: a failed lookup is a result the menu can show.
+    // Automatic mode also installs: the installer is verified against the hash
+    // the same release publishes before anything runs.
+    if (updateMode === 'auto' && app.isPackaged) {
+      void runUpdateCheck().then((result) => {
+        if (result.status === 'available') void installUpdate();
+      });
     }
 
     app.on('activate', () => {

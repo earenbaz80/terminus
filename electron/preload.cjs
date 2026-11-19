@@ -7,6 +7,7 @@ const FRAME_CONTEXT_MENU_CHANNEL = 'terminus:context-menu:frame';
 const FIND_SHORTCUT_CHANNEL = 'terminus:find:shortcut';
 const PTY_DATA_CHANNEL = 'terminus:pty:data';
 const PTY_EXIT_CHANNEL = 'terminus:pty:exit';
+const UPDATE_PROGRESS_CHANNEL = 'terminus:updates:progress';
 
 const subscribe = (channel, callback) => {
   if (typeof callback !== 'function') return () => {};
@@ -61,6 +62,11 @@ contextBridge.exposeInMainWorld('terminusDesktop', {
   getNetworkState: () => ipcRenderer.invoke('terminus:network:state'),
   setAllowPrivateNetworks: (allowPrivate) =>
     ipcRenderer.invoke('terminus:network:set-allow-private', allowPrivate),
+  getUpdateState: () => ipcRenderer.invoke('terminus:updates:state'),
+  setUpdateMode: (mode) => ipcRenderer.invoke('terminus:updates:set-mode', mode),
+  checkForUpdates: () => ipcRenderer.invoke('terminus:updates:check'),
+  installUpdate: () => ipcRenderer.invoke('terminus:updates:install'),
+  onUpdateProgress: (callback) => subscribe(UPDATE_PROGRESS_CHANNEL, callback),
 });
 
 contextBridge.exposeInMainWorld('terminusShell', {
