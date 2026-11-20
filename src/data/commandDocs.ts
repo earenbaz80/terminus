@@ -87,6 +87,29 @@ export const COMMAND_DOCS: CommandDoc[] = [
     ],
   },
   {
+    command: 'indexar',
+    syntax: 'indexar <url> | indexar | indexar vaciar',
+    category: 'navegación',
+    summary: 'Indexa un sitio web en el índice local de búsqueda.',
+    description: 'Recorre hasta 20 páginas del mismo host, las descarga con la validación y el pinning del proxy y guarda título, texto y enlaces en el índice BM25 local. Sin argumentos muestra el estado del índice; «indexar vaciar» borra todos los documentos y términos.',
+    examples: [
+      { code: 'indexar https://en.wikipedia.org/wiki/Retrocomputing', description: 'Indexar el artículo y sus enlaces del mismo host' },
+      { code: 'indexar', description: 'Ver documentos, hosts, términos y carpeta del índice' },
+      { code: 'indexar vaciar', description: 'Borrar todo el índice local' },
+    ],
+  },
+  {
+    command: 'buscar local',
+    syntax: 'buscar local <consulta>',
+    category: 'navegación',
+    summary: 'Busca solo en el índice local, sin salir a la red.',
+    description: 'Consulta el índice BM25 y devuelve título, URL y un fragmento con la coincidencia. No sustituye a «search»: esa sigue buscando en la web.',
+    examples: [
+      { code: 'buscar local redes neuronales', description: 'Buscar páginas indexadas sobre redes neuronales' },
+      { code: 'buscar local protocolo quic', description: 'Consultar el índice por un protocolo concreto' },
+    ],
+  },
+  {
     command: 'curl',
     syntax: 'curl [-X GET/POST] <url>',
     category: 'navegación',

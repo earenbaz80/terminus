@@ -55,6 +55,20 @@ const de: Record<string, CommandDocText> = {
       'Fragt DuckDuckGo und Wikipedia ab und zeigt die Ergebnisse in Terminus Search, der internen Suchseite des Browsers, mit Verlauf und Leseansicht im Tab.',
     examples: ['Dokumentation zu moderner Kryptografie suchen', 'Kurzleitfäden für Konsolenbefehle suchen'],
   },
+  indexar: {
+    summary: 'Indexiert eine Website im lokalen Suchindex.',
+    description: 'Durchsucht bis zu 20 Seiten derselben Domain, lädt sie mit der Validierung und dem IP-Pinning des Proxys und speichert Titel, Text und Links im lokalen BM25-Index. Ohne Argumente zeigt der Befehl den Status; „indexar vaciar“ löscht alle Dokumente und Begriffe.',
+    examples: [
+      'Den Artikel und seine Links derselben Domain indexieren',
+      'Dokumente, Hosts, Begriffe und Ordner des Index anzeigen',
+      'Den gesamten lokalen Index löschen',
+    ],
+  },
+  'buscar local': {
+    summary: 'Sucht nur im lokalen Index, ohne Netzzugriff.',
+    description: 'Fragt den BM25-Index ab und liefert Titel, URL und einen Ausschnitt mit der Fundstelle. Ersetzt nicht „search“: dieser Befehl sucht weiterhin im Web.',
+    examples: ['Indexierte Seiten über neuronale Netze suchen', 'Den Index nach einem bestimmten Protokoll durchsuchen'],
+  },
   curl: {
     summary: 'Prüft echte HTTP-Anfragen mit Headern, Latenz und Statuscode.',
     description:
@@ -330,6 +344,20 @@ const fr: Record<string, CommandDocText> = {
       'Chercher de la documentation sur la cryptographie moderne',
       'Chercher des aide-mémoire de commandes console',
     ],
+  },
+  indexar: {
+    summary: 'Indexe un site dans l’index de recherche local.',
+    description: 'Parcourt jusqu’à 20 pages du même hôte, les télécharge avec la validation et le pinning d’IP du proxy, puis enregistre titre, texte et liens dans l’index BM25 local. Sans argument, il affiche l’état de l’index ; « indexar vaciar » efface tous les documents et termes.',
+    examples: [
+      'Indexer l’article et ses liens du même hôte',
+      'Afficher les documents, hôtes, termes et le dossier de l’index',
+      'Effacer tout l’index local',
+    ],
+  },
+  'buscar local': {
+    summary: 'Cherche uniquement dans l’index local, sans réseau.',
+    description: 'Interroge l’index BM25 et renvoie le titre, l’URL et un extrait avec l’occurrence. Ne remplace pas « search », qui continue de chercher sur le web.',
+    examples: ['Chercher des pages indexées sur les réseaux de neurones', 'Interroger l’index sur un protocole précis'],
   },
   curl: {
     summary: 'Inspecte de vraies requêtes HTTP avec en-têtes, latence et code de statut.',
@@ -615,6 +643,20 @@ const it: Record<string, CommandDocText> = {
       'Cercare guide rapide ai comandi della console',
     ],
   },
+  indexar: {
+    summary: 'Indicizza un sito nell’indice di ricerca locale.',
+    description: 'Percorre fino a 20 pagine dello stesso host, le scarica con la validazione e il pinning dell’IP del proxy e salva titolo, testo e link nell’indice BM25 locale. Senza argomenti mostra lo stato dell’indice; «indexar vaciar» cancella documenti e termini.',
+    examples: [
+      'Indicizzare l’articolo e i suoi link dello stesso host',
+      'Mostrare documenti, host, termini e cartella dell’indice',
+      'Cancellare tutto l’indice locale',
+    ],
+  },
+  'buscar local': {
+    summary: 'Cerca solo nell’indice locale, senza rete.',
+    description: 'Interroga l’indice BM25 e restituisce titolo, URL e un estratto con la corrispondenza. Non sostituisce «search», che continua a cercare sul web.',
+    examples: ['Cercare pagine indicizzate sulle reti neurali', 'Consultare l’indice per un protocollo specifico'],
+  },
   curl: {
     summary: 'Ispeziona richieste HTTP reali con header, latenza e codice di stato.',
     description:
@@ -892,6 +934,20 @@ const en: Record<string, CommandDocText> = {
     description:
       'Queries DuckDuckGo and Wikipedia and shows results in Terminus Search, the browser’s internal search page, with history and reader view in the tab.',
     examples: ['Search for modern cryptography documentation', 'Search for quick console command guides'],
+  },
+  indexar: {
+    summary: 'Indexes a website into the local search index.',
+    description: 'Crawls up to 20 pages on the same host, downloads them with the proxy validation and IP pinning, and stores title, text and links in the local BM25 index. Without arguments it shows the index status; “indexar vaciar” deletes every document and term.',
+    examples: [
+      'Index the article and its same-host links',
+      'Show the index documents, hosts, terms and directory',
+      'Delete the whole local index',
+    ],
+  },
+  'buscar local': {
+    summary: 'Searches only the local index, without touching the network.',
+    description: 'Queries the BM25 index and returns title, URL and a snippet with the match. It does not replace “search”, which still queries the web.',
+    examples: ['Search indexed pages about neural networks', 'Query the index for a specific protocol'],
   },
   curl: {
     summary: 'Inspects real HTTP requests with headers, latency and status code.',
