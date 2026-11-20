@@ -82,6 +82,22 @@ describe('indexar', () => {
     expect(log.output).toContain('example.com');
   });
 
+  it('vacía el índice con DELETE cuando se pide "indexar vaciar"', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ ok: true, index: { documents: 0, hosts: [], terms: 0 } })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const log = await processCommand('indexar vaciar', makeContext());
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/index');
+    expect(init?.method).toBe('DELETE');
+    expect(log.type).toBe('system');
+    expect(log.output).toContain('vaciado');
+  });
+
   it('informa del error del servidor sin romper la terminal', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(
       { error: 'invalid_url', message: 'Se esperaba una dirección http(s) válida.' },

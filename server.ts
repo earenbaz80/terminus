@@ -958,6 +958,13 @@ async function startServer() {
     }
   });
 
+  // Vaciar el índice es destructivo, así que pide un DELETE explícito.
+  app.delete('/api/index', async (_req, res) => {
+    await searchIndex.load();
+    await searchIndex.clear();
+    return res.json({ ok: true, index: searchIndex.status() });
+  });
+
   // Real DNS lookup endpoint
   app.get('/api/dns', async (req, res) => {
     const host = req.query.host as string;

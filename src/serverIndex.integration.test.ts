@@ -231,6 +231,29 @@ describe('/api/index integration', () => {
     expect(JSON.parse(response.body).error).toBe('invalid_url');
   });
 
+  it('vacía el índice con DELETE y deja de encontrar páginas', async () => {
+    const cleared = await request(`${terminusOrigin}/api/index`, {
+      method: 'DELETE',
+      headers: { Cookie: sessionCookie },
+    });
+
+    expect(cleared.status).toBe(200);
+    const body = JSON.parse(cleared.body);
+    expect(body.ok).toBe(true);
+    expect(body.index.documents).toBe(0);
+    expect(body.index.terms).toBe(0);
+    expect(body.index.hosts).toEqual([]);
+
+    const search = await request(`${terminusOrigin}/api/index?q=redes`, {
+      headers: { Cookie: sessionCookie },
+    });
+
+    expect(search.status).toBe(200);
+    const found = JSON.parse(search.body);
+    expect(found.results).toEqual([]);
+    expect(found.index.documents).toBe(0);
+  });
+
   it('rechaza con 403 un host de metadatos sin tocar la red', async () => {
     const response = await postIndex({ url: 'http://169.254.169.254/latest/meta-data/' });
 

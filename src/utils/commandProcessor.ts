@@ -2345,6 +2345,10 @@ async function performIndexCommand(args: string[], ctx: CommandContext): Promise
   const timestamp = new Date().toLocaleTimeString();
   const target = (args[0] || '').trim();
 
+  if (target === 'vaciar') {
+    return performIndexClear(ctx);
+  }
+
   if (!target) {
     try {
       const res = await fetch('/api/index');
@@ -2396,6 +2400,29 @@ async function performIndexCommand(args: string[], ctx: CommandContext): Promise
         ms: data.durationMs ?? 0,
         documents: data.index?.documents ?? 0,
       }),
+    };
+  } catch (error: any) {
+    return {
+      id: `index_${Date.now()}`,
+      timestamp,
+      type: 'stderr',
+      output: ctx.tc('out.indexError', { message: error?.message || String(error) }),
+    };
+  }
+}
+
+/** `indexar vaciar`: borra todo el índice local. */
+async function performIndexClear(ctx: CommandContext): Promise<TerminalLogEntry> {
+  const timestamp = new Date().toLocaleTimeString();
+  try {
+    const res = await fetch('/api/index', { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    return {
+      id: `index_${Date.now()}`,
+      timestamp,
+      type: 'system',
+      output: ctx.tc('out.indexCleared'),
     };
   } catch (error: any) {
     return {

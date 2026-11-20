@@ -346,6 +346,9 @@ export class TerminusSearchIndex {
     this.documentFrequency.clear();
     this.totalTextChars = 0;
     this.updatedAt = '';
+    // Sin esto `save()` sale temprano cuando el índice estaba limpio y el
+    // borrado no llegaba al disco.
+    this.dirty = true;
     await this.save();
   }
 

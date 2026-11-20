@@ -73,6 +73,26 @@ describe('TerminusSearchIndex', () => {
     expect(second.search('quic')[0]?.url).toBe('https://example.com/doc');
   });
 
+  it('clear() vacía el índice en memoria y en disco', async () => {
+    const first = await makeIndex();
+    await first.addDocument({
+      url: 'https://example.com/doc',
+      title: 'Protocolo QUIC',
+      text: 'QUIC es un protocolo de transporte sobre UDP pensado para reducir latencia. '.repeat(8),
+    });
+    await first.flush();
+
+    await first.clear();
+
+    expect(first.status().documents).toBe(0);
+    expect(first.status().terms).toBe(0);
+    expect(first.search('quic')).toEqual([]);
+
+    const second = new TerminusSearchIndex(first.status().directory);
+    await second.load();
+    expect(second.status().documents).toBe(0);
+  });
+
   it('no indexa términos que quedaron fuera del texto truncado', async () => {
     const index = await makeIndex();
     // 8 documentos de 60 000 caracteres llenan el presupuesto de 500 000.
