@@ -56,6 +56,29 @@ La consola recibe `allowInlineFrames={false}` desde `src/App.tsx`: el flujo del 
 
 Para probar la vista WEB dentro del propio terminal, pon `allowInlineFrames={true}` en tu copia y no lo commitees: es un ajuste local, así que `git status` mostrará `src/App.tsx` modificado de forma permanente. Revierte con `git checkout -- src/App.tsx` cuando termines.
 
+## Índice local de búsqueda
+
+La consola puede guardar páginas en un índice BM25 propio y consultarlas después. El índice vive en el servidor porque escribe en disco, y persiste entre reinicios y actualizaciones: no consulta ningún buscador externo.
+
+| Comando | Qué hace |
+| --- | --- |
+| `indexar <url>` | Recorre hasta 20 páginas del mismo host desde esa URL y guarda título, texto y enlaces. |
+| `indexar` | Muestra documentos, hosts, términos y la carpeta del índice. |
+| `indexar vaciar` | Borra todos los documentos y términos. Es destructivo y lo informa con el recuento eliminado. |
+| `buscar local <consulta>` | Consulta el índice y devuelve hasta 10 resultados con título, URL y fragmento. |
+
+`indexar` reutiliza la descarga segura de `/api/view` (`fetchRemote`): valida cada salto y fija la IP resuelta, así que la política de red vale igual aquí y un destino privado se rechaza salvo que se habilite `TERMINUS_ALLOW_PRIVATE=1`. El crawler se queda en el host de la semilla, descarta binarios y esquemas no web, y espera 150 ms entre páginas. Las páginas con menos de 80 caracteres de texto no entran en el índice y se cuentan como omitidas.
+
+`buscar local` no sale a la red y no sustituye a `search`, que sigue buscando en la web. Sin coincidencias, el aviso indica cuántos documentos hay y recuerda cómo indexar.
+
+El índice se guarda en los datos de la aplicación, no en la carpeta temporal que el sistema puede purgar:
+
+- Windows: `%APPDATA%\Terminus\search-index`
+- macOS: `~/Library/Application Support/Terminus/search-index`
+- Linux: `$XDG_DATA_HOME/Terminus/search-index`; sin `XDG_DATA_HOME`, `~/.local/share/Terminus/search-index`
+
+`TERMINUS_SEARCH_INDEX_DIR` mueve esa carpeta. Se lee al arrancar el servidor, así que reinicia `npm run dev` o Electron después de cambiarla.
+
 ## Scripts de verificación
 
 ```bash
