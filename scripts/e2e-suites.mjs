@@ -33,7 +33,7 @@ export const E2E_SUITES = [
     script: 'test:e2e:installed',
     log: 'e2e-installed.log',
     locale: '',
-    steps: 6,
+    steps: 7,
   },
   {
     label: 'ui',

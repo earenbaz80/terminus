@@ -309,6 +309,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findStatus, setFindStatus] = useState('');
+  // En NATIVO el recuento lo da `found-in-page` del invitado: «coincidencia de total».
+  const [findCount, setFindCount] = useState<{ index: number; total: number } | null>(null);
   // El modo activo no permite buscar dentro de la página (NATIVO o REAL directo):
   // se marca en el DOM para que el E2E lo compruebe sin leer texto traducido.
   const [findBlocked, setFindBlocked] = useState(false);
@@ -750,23 +752,84 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     else setLocalZoom(bounded);
   }, [onSetZoom]);
 
-  const sendFind = useCallback((backwards = false) => {
-    if (!findQuery.trim()) {
-      setFindStatus('');
-      setFindBlocked(false);
+  const nativeViewRef = useRef<NativeWebviewElement | null>(null);
+  const nativeReadyRef = useRef(false);
+  // Última consulta enviada al invitado y su recuento: `findNext` depende de ella.
+  const nativeFindQueryRef = useRef('');
+  // Consulta que no pudo entrar porque el invitado aún no tenía `dom-ready`.
+  const pendingNativeFindRef = useRef<{ query: string; backwards: boolean } | null>(null);
+  const findOpenRef = useRef(findOpen);
+  findOpenRef.current = findOpen;
+  // `found-in-page` llega como evento del invitado, con la consulta ya resuelta.
+  const foundInPageRef = useRef<(result?: { matches?: number; activeMatchOrdinal?: number }) => void>(
+    () => {}
+  );
+  foundInPageRef.current = (result) => {
+    if (!nativeViewActive) return;
+    const total = Number(result?.matches) || 0;
+    const index = Number(result?.activeMatchOrdinal) || 0;
+    setFindBlocked(false);
+    if (total <= 0) {
+      setFindCount(null);
+      setFindStatus(t('find.noMatch'));
       return;
     }
-    // En NATIVO no hay iframe proxied al que mandar la búsqueda, así que el aviso es
-    // el mismo que en REAL: para buscar dentro de la página hay que pasar a OSCURO
-    // o TEXTO. Sin esto el modo nativo se quedaba sin decir nada al escribir.
-    if (!usesProxy || nativeViewActive) {
+    setFindCount({ index, total });
+    setFindStatus(t('find.nativeCount', { index, total }));
+  };
+
+  /**
+   * Quita el resaltado del invitado. Antes de `dom-ready` la `<webview>` no admite
+   * `stopFindInPage` y lanza: una excepción en un efecto tumba toda la interfaz.
+   */
+  const clearNativeFind = () => {
+    nativeFindQueryRef.current = '';
+    if (!nativeReadyRef.current) return;
+    try {
+      nativeViewRef.current?.stopFindInPage?.('clearSelection');
+    } catch {
+      // El invitado se está recargando; el resaltado se va con la navegación.
+    }
+  };
+
+  const sendFind = useCallback((backwards = false) => {
+    const query = findQuery.trim();
+    if (!query) {
+      setFindStatus('');
+      setFindBlocked(false);
+      setFindCount(null);
+      clearNativeFind();
+      return;
+    }
+
+    // NATIVO: la página es un invitado de Chromium, así que la búsqueda y el
+    // resaltado los hace él. `findNext` distingue «refinar la consulta» de «ir a la
+    // siguiente coincidencia»; sin él, cambiar de consulta reusaría la anterior.
+    if (nativeViewActive) {
+      setFindBlocked(false);
+      const view = nativeViewRef.current;
+      if (!view?.findInPage) return;
+      const findNext = nativeFindQueryRef.current === query;
+      try {
+        view.findInPage(query, { forward: !backwards, findNext });
+        nativeFindQueryRef.current = query;
+        pendingNativeFindRef.current = null;
+      } catch {
+        // La `<webview>` no acepta `findInPage` hasta `dom-ready`: se reintenta ahí.
+        nativeFindQueryRef.current = '';
+        pendingNativeFindRef.current = { query, backwards };
+      }
+      return;
+    }
+
+    if (!usesProxy) {
       setFindStatus(t('find.changeMode'));
       setFindBlocked(true);
       return;
     }
     setFindBlocked(false);
     iframeRef.current?.contentWindow?.postMessage(
-      { source: 'termbrowser-find', query: findQuery, backwards },
+      { source: 'termbrowser-find', query, backwards },
       '*'
     );
   }, [findQuery, usesProxy, nativeViewActive, t]);
@@ -775,8 +838,6 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   // que ocupa su hueco del layout y la interfaz se pinta encima sin recortarla.
   const nativeNavigationRef = useRef(onNativeNavigation);
   nativeNavigationRef.current = onNativeNavigation;
-  const nativeViewRef = useRef<NativeWebviewElement | null>(null);
-  const nativeReadyRef = useRef(false);
   const nativeZoomRef = useRef(zoom);
   nativeZoomRef.current = zoom;
   const pendingNativeUrlRef = useRef<string | null>(null);
@@ -801,6 +862,17 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     const onReady = () => {
       nativeReadyRef.current = true;
       view.setZoomFactor?.(nativeZoomRef.current);
+      // Si el buscador se abrió antes de este evento, la consulta entra ahora.
+      const pendingFind = pendingNativeFindRef.current;
+      pendingNativeFindRef.current = null;
+      if (pendingFind && findOpenRef.current) {
+        try {
+          view.findInPage?.(pendingFind.query, { forward: !pendingFind.backwards, findNext: false });
+          nativeFindQueryRef.current = pendingFind.query;
+        } catch {
+          // Se queda sin recuento; volver a escribir en el campo lo reintenta.
+        }
+      }
       const pending = pendingNativeUrlRef.current;
       pendingNativeUrlRef.current = null;
       if (pending && pending !== view.getURL?.()) void view.loadURL?.(pending);
@@ -809,6 +881,10 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     view.addEventListener('did-navigate', sync);
     view.addEventListener('did-navigate-in-page', sync);
     view.addEventListener('page-title-updated', sync);
+    // Chromium avisa cada vez que resuelve una búsqueda: de ahí sale el recuento.
+    const onFoundInPage = (event: Event) =>
+      foundInPageRef.current((event as unknown as { result?: { matches?: number } }).result);
+    view.addEventListener('found-in-page', onFoundInPage);
 
     host.replaceChildren(view);
 
@@ -817,6 +893,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       view.removeEventListener('did-navigate', sync);
       view.removeEventListener('did-navigate-in-page', sync);
       view.removeEventListener('page-title-updated', sync);
+      view.removeEventListener('found-in-page', onFoundInPage);
+      nativeFindQueryRef.current = '';
       host.replaceChildren();
       nativeViewRef.current = null;
       nativeReadyRef.current = false;
@@ -903,11 +981,20 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     if (!findQuery.trim()) {
       setFindStatus('');
       setFindBlocked(false);
+      setFindCount(null);
+      clearNativeFind();
       return;
     }
     const timer = window.setTimeout(() => sendFind(false), 100);
     return () => window.clearTimeout(timer);
   }, [findQuery, findOpen, usesProxy, sendFind]);
+
+  // Cerrar el buscador o salir de NATIVO deja de resaltar en el invitado.
+  useEffect(() => {
+    if (findOpen && nativeViewActive) return;
+    clearNativeFind();
+    setFindCount(null);
+  }, [findOpen, nativeViewActive]);
 
   // The proxied iframe reports whether window.find() located a match.
   useEffect(() => {
@@ -930,6 +1017,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       setFindOpen(false);
       setFindStatus('');
       setFindBlocked(false);
+      setFindCount(null);
+      clearNativeFind();
     };
     window.addEventListener('keydown', closeFindWithEscape);
     return () => window.removeEventListener('keydown', closeFindWithEscape);
@@ -1368,6 +1457,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
               // `mode` = el buscador no entra en la página con el modo activo; el E2E
               // se ancla a esto en vez de al texto traducido de `find.changeMode`.
               data-find-blocked={findBlocked ? 'mode' : undefined}
+              // Recuento nativo `actual/total`; ausente mientras no hay resultado.
+              data-find-count={findCount ? `${findCount.index}/${findCount.total}` : undefined}
             >
               {findStatus}
             </span>
@@ -1397,6 +1488,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
                 setFindOpen(false);
                 setFindQuery('');
                 setFindStatus('');
+                setFindCount(null);
+                clearNativeFind();
               }}
               className="shrink-0 cursor-pointer p-0.5 opacity-65 hover:opacity-100"
               title={t('browser.findCloseTitle')}

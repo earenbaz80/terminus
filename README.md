@@ -11,7 +11,7 @@ El estado del proyecto, los pendientes y las decisiones cerradas están en [ROAD
 - **Navegador**: barra de direcciones con sugerencias de marcadores e historial global, historial por pestaña, favoritos, indicador HTTPS/HTTP y descarga de la página.
 - **Búsqueda web desde el inicio**: el campo de la pantalla de inicio busca directamente, sin abrir otra pantalla antes; las sugerencias son clicables y los resultados aparecen en Terminus Search.
 - **Vistas de página**: `REAL` (iframe directo cuando el sitio lo permite), `OSCURO` (proxy con hoja retro) y `TEXTO` (extracción legible).
-- **Búsqueda en página** con `Ctrl+F` en las tres vistas; en Electron un atajo global la captura incluso con el foco dentro de un iframe REAL cross-origin. **Zoom por pestaña** con `Ctrl++`, `Ctrl+-` y `Ctrl+0`.
+- **Búsqueda en página** con `Ctrl+F` en las cuatro vistas; en Electron un atajo global la captura incluso con el foco dentro de un iframe REAL cross-origin o del `<webview>` NATIVO. En NATIVO busca Chromium dentro de la página (`findInPage`), con resaltado, recuento `n/m` y saltos con Enter, `Shift+Enter` o los botones siguiente/anterior; en OSCURO y TEXTO la busca el documento proxificado. Solo la vista REAL directa pide cambiar de modo. **Zoom por pestaña** con `Ctrl++`, `Ctrl+-` y `Ctrl+0`.
 - **Terminal**: intérprete interno, PTY real con CMD/PowerShell/Bash en Electron, comandos de navegación, archivos virtuales y workspace local.
 - **Panel de archivos**, monitor de recursos, scripts, extensiones, atajos, ayuda y bóveda cifrada.
 - **Interfaz en cinco idiomas**: español, alemán, francés, italiano e inglés, con cambio en vivo desde Configuración y español como referencia.
@@ -87,7 +87,7 @@ npm test                      # Vitest
 npm run build                 # cliente Vite con code-splitting
 npm run build:server
 npm run test:e2e:adblock     # Electron empaquetado: red, popups y cosméticos
-npm run test:e2e:installed    # Windows: Ctrl+F y búsqueda OSCURO/TEXTO
+npm run test:e2e:installed    # Windows: Ctrl+F en NATIVO, OSCURO y TEXTO
 npm run test:e2e:installed:ui # Windows: cabecera, tema persistido y búsqueda en un paso
 npm run test:e2e:network      # Windows: interruptor de red en la app empaquetada y en desktop:dev
 npm run test:e2e:python-sandbox # Chromium real; requiere npx playwright install chromium
@@ -97,7 +97,7 @@ Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds cor
 
 `test:e2e:adblock` arranca `release/win-unpacked/Terminus.exe` con Playwright, sirve un fixture local de anuncios y comprueba el bloqueo de red y de popups. Después navega a `https://example.com/` para verificar que los cosméticos de EasyList se aplican al iframe proxificado; el fixture local no sirve para cosméticos porque `127.0.0.1` no tiene eTLD. Requiere haber ejecutado `npm run desktop:dir` antes.
 
-`test:e2e:installed` requiere Windows, una sesión de escritorio interactiva y la app instalada a partir del build actual. Arranca una copia aislada con perfil temporal, usa `https://example.com/` para el iframe REAL cross-origin y un fixture local para las vistas proxificadas, envía `Ctrl+F` con `SendKeys` y comprueba una búsqueda real en OSCURO y TEXTO. Si el ejecutable está en otra ruta, define `TERMINUS_INSTALLED_EXE`.
+`test:e2e:installed` requiere Windows, una sesión de escritorio interactiva y la app instalada a partir del build actual. Arranca una copia aislada con perfil temporal, usa `https://example.com/` para el `<webview>` NATIVO y el iframe REAL cross-origin, y un fixture local para las vistas proxificadas, envía `Ctrl+F` con `SendKeys` y comprueba la búsqueda real en NATIVO (recuento y siguiente/anterior dentro del invitado), OSCURO y TEXTO. Si el ejecutable está en otra ruta, define `TERMINUS_INSTALLED_EXE`.
 
 `test:e2e:installed:ui` usa el mismo arranque aislado (perfil temporal y CDP) contra la app empaquetada y cubre la interfaz: un solo `<header>` con las pestañas y los controles de ventana dentro, el menú de configuración abierto y un cambio de tema que queda en `localStorage` y se aplica tras recargar el renderer, y la búsqueda del inicio en un paso (escribir y Enter, sin botón intermedio). Falla si el build instalado no es el actual.
 
