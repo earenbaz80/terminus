@@ -53,16 +53,6 @@ const FIND_SHORTCUT_MARKER = 'terminus:find:shortcut';
 // (atributos del DOM, no el aria-label del idioma activo), así la prueba sirve en cualquier idioma.
 const ADDRESS_SELECTOR = 'input[aria-controls="terminus-address-suggestions"]';
 const EXTERNAL_URL = 'https://example.com/';
-// Aviso de «cambia de modo» (`find.changeMode` en `src/i18n/messages.ts`): la lista
-// cubre los cinco idiomas que publica la app, así que la aserción del modo NATIVO no
-// depende del idioma activo.
-const CHANGE_MODE_HINTS = [
-  'Cambia a OSCURO o TEXTO para buscar dentro de esta página.',
-  'Switch to DARK or TEXT to search within this page.',
-  'Wechsle zu DUNKEL oder TEXT, um auf dieser Seite zu suchen.',
-  'Passez en SOMBRE ou TEXTE pour rechercher dans cette page.',
-  'Passa a SCURO o TESTO per cercare in questa pagina.',
-];
 
 // --- Anclas del DOM (ninguna depende del idioma activo) ---
 // Conmutador del buscador: atributo fijo de teclado, no la etiqueta traducida.
@@ -92,6 +82,9 @@ const FIND_BAR_EXPRESSION = `(() => {
     selStart: input?.selectionStart ?? null,
     selEnd: input?.selectionEnd ?? null,
     status: status?.textContent?.trim() ?? '',
+    // data-find-blocked="mode" lo pone la app cuando el modo activo no deja buscar
+    // dentro de la página: el E2E se ancla a eso, no al texto traducido del aviso.
+    blocked: status?.getAttribute('data-find-blocked') ?? null,
     focused: document.activeElement === input,
     documentFocused: document.hasFocus(),
     frameMode,
@@ -881,11 +874,12 @@ async function main() {
   const changeMode = await waitForExpression(
     cdp,
     FIND_BAR_EXPRESSION,
-    (state) => CHANGE_MODE_HINTS.includes(state.status),
-    'el aviso de cambiar de modo en el buscador',
+    (state) => state.blocked === 'mode',
+    'el buscador marcado como bloqueado por el modo',
     10000,
   );
   assert.equal(changeMode.frameMode, null, 'El modo NATIVO no debe tener un iframe proxied.');
+  assert.notEqual(changeMode.status, '', 'El buscador no explicó por qué no busca.');
   await closeFindBar(cdp);
 
   pass(

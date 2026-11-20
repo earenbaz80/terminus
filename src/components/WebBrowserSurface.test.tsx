@@ -148,17 +148,15 @@ describe('WebBrowserSurface', () => {
       const bar = document.querySelector('[data-e2e="find-bar"]');
       expect(bar).not.toBeNull();
       const status = bar!.querySelector('[data-e2e="find-status"]')!;
-      expect(status.textContent).toBe('');
+      expect(status.getAttribute('data-find-blocked')).toBeNull();
 
       fireEvent.change(bar!.querySelector('[data-e2e="find-input"]')!, {
         target: { value: 'Example' },
       });
 
-      await waitFor(() =>
-        expect(status.textContent).toBe(
-          'Cambia a OSCURO o TEXTO para buscar dentro de esta página.',
-        ),
-      );
+      // El ancla del E2E es el atributo, no el texto: el aviso se traduce.
+      await waitFor(() => expect(status.getAttribute('data-find-blocked')).toBe('mode'));
+      expect(status.textContent).not.toBe('');
       // La página sigue en el invitado nativo: no aparece un iframe al buscar.
       expect(document.querySelector('iframe')).toBeNull();
       expect(document.querySelector('webview')).not.toBeNull();

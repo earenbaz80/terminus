@@ -309,6 +309,9 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findStatus, setFindStatus] = useState('');
+  // El modo activo no permite buscar dentro de la página (NATIVO o REAL directo):
+  // se marca en el DOM para que el E2E lo compruebe sin leer texto traducido.
+  const [findBlocked, setFindBlocked] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [localZoom, setLocalZoom] = useState(1);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -750,6 +753,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   const sendFind = useCallback((backwards = false) => {
     if (!findQuery.trim()) {
       setFindStatus('');
+      setFindBlocked(false);
       return;
     }
     // En NATIVO no hay iframe proxied al que mandar la búsqueda, así que el aviso es
@@ -757,8 +761,10 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     // o TEXTO. Sin esto el modo nativo se quedaba sin decir nada al escribir.
     if (!usesProxy || nativeViewActive) {
       setFindStatus(t('find.changeMode'));
+      setFindBlocked(true);
       return;
     }
+    setFindBlocked(false);
     iframeRef.current?.contentWindow?.postMessage(
       { source: 'termbrowser-find', query: findQuery, backwards },
       '*'
@@ -896,6 +902,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     if (!findOpen) return;
     if (!findQuery.trim()) {
       setFindStatus('');
+      setFindBlocked(false);
       return;
     }
     const timer = window.setTimeout(() => sendFind(false), 100);
@@ -909,6 +916,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       if (!isTrustedFrameMessage(event, iframeRef.current, expectedFrameOrigin)) return;
       const data = event.data;
       if (!data || data.source !== 'termbrowser-find-result' || !findOpen) return;
+      setFindBlocked(false);
       setFindStatus(data.found ? t('find.match') : t('find.noMatch'));
     };
     window.addEventListener('message', handleFindResult);
@@ -921,6 +929,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       event.preventDefault();
       setFindOpen(false);
       setFindStatus('');
+      setFindBlocked(false);
     };
     window.addEventListener('keydown', closeFindWithEscape);
     return () => window.removeEventListener('keydown', closeFindWithEscape);
@@ -1352,7 +1361,14 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
               data-e2e="find-input"
               spellCheck={false}
             />
-            <span className="max-w-32 truncate opacity-55" aria-live="polite" data-e2e="find-status">
+            <span
+              className="max-w-32 truncate opacity-55"
+              aria-live="polite"
+              data-e2e="find-status"
+              // `mode` = el buscador no entra en la página con el modo activo; el E2E
+              // se ancla a esto en vez de al texto traducido de `find.changeMode`.
+              data-find-blocked={findBlocked ? 'mode' : undefined}
+            >
               {findStatus}
             </span>
             <button
