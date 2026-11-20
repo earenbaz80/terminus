@@ -127,11 +127,11 @@ describe('WebBrowserSurface', () => {
     }
   });
 
-  // El modo NATIVO no tiene iframe proxied al que mandar la búsqueda: sin esto el
-  // buscador se quedaba mudo al escribir, porque `usesProxy` es true en ese modo y el
-  // postMessage se perdía en un `iframeRef` nulo. Lo cubre también el paso 1 de
-  // `scripts/e2e-installed-ctrl-f.mjs`, que solo corre con la app instalada.
-  it('avisa del cambio de modo al buscar dentro del webview nativo', async () => {
+  // En NATIVO la búsqueda la resuelve Chromium dentro del invitado: `findInPage`
+  // resalta las coincidencias y `found-in-page` trae el recuento, así que ya no se
+  // pide cambiar de modo. El paso 1 de `scripts/e2e-installed-ctrl-f.mjs` lo repite
+  // sobre la app instalada, porque aquí el invitado es un doble.
+  it('busca dentro del webview nativo con findInPage y navega entre coincidencias', async () => {
     window.terminusNative = { available: true };
     const storageKey = 'termbrowser.page-mode';
     const savedMode = localStorage.getItem(storageKey);
@@ -140,6 +140,17 @@ describe('WebBrowserSurface', () => {
     try {
       renderSurface(pageTab);
       await waitFor(() => expect(document.querySelector('webview')).toBeTruthy());
+      const viewElement = document.querySelector('webview')!;
+      const view = viewElement as unknown as {
+        findInPage?: (text: string, options?: { forward?: boolean; findNext?: boolean }) => number;
+        stopFindInPage?: (action?: string) => void;
+      };
+      const findInPage = vi.fn(() => 1);
+      const stopFindInPage = vi.fn();
+      view.findInPage = findInPage;
+      view.stopFindInPage = stopFindInPage;
+      // El invitado real solo acepta findInPage/stopFindInPage tras `dom-ready`.
+      fireEvent(viewElement, new Event('dom-ready'));
 
       const toggle = document.querySelector('button[aria-keyshortcuts="Control+F"]');
       expect(toggle).not.toBeNull();
@@ -148,22 +159,73 @@ describe('WebBrowserSurface', () => {
       const bar = document.querySelector('[data-e2e="find-bar"]');
       expect(bar).not.toBeNull();
       const status = bar!.querySelector('[data-e2e="find-status"]')!;
+      const input = bar!.querySelector('[data-e2e="find-input"]')!;
+
+      fireEvent.change(input, { target: { value: 'Example' } });
+
+      // La consulta entra en el invitado, no en un iframe, y sin aviso de modo.
+      await waitFor(() =>
+        expect(findInPage).toHaveBeenCalledWith('Example', { forward: true, findNext: false })
+      );
       expect(status.getAttribute('data-find-blocked')).toBeNull();
-
-      fireEvent.change(bar!.querySelector('[data-e2e="find-input"]')!, {
-        target: { value: 'Example' },
-      });
-
-      // El ancla del E2E es el atributo, no el texto: el aviso se traduce.
-      await waitFor(() => expect(status.getAttribute('data-find-blocked')).toBe('mode'));
-      expect(status.textContent).not.toBe('');
-      // La página sigue en el invitado nativo: no aparece un iframe al buscar.
       expect(document.querySelector('iframe')).toBeNull();
-      expect(document.querySelector('webview')).not.toBeNull();
+
+      // El recuento sale del evento del invitado, no de la app.
+      fireEvent(
+        viewElement,
+        Object.assign(new Event('found-in-page'), {
+          result: { activeMatchOrdinal: 2, matches: 7 },
+        })
+      );
+      await waitFor(() => expect(status.getAttribute('data-find-count')).toBe('2/7'));
+      expect(status.textContent).not.toBe('');
+
+      fireEvent.click(bar!.querySelector('[data-e2e="find-next"]')!);
+      await waitFor(() =>
+        expect(findInPage).toHaveBeenLastCalledWith('Example', { forward: true, findNext: true })
+      );
+
+      fireEvent.click(bar!.querySelector('[data-e2e="find-prev"]')!);
+      await waitFor(() =>
+        expect(findInPage).toHaveBeenLastCalledWith('Example', { forward: false, findNext: true })
+      );
+
+      // Otra consulta empieza la búsqueda en vez de saltar a la siguiente coincidencia.
+      fireEvent.change(input, { target: { value: 'Example Domain' } });
+      await waitFor(() =>
+        expect(findInPage).toHaveBeenLastCalledWith('Example Domain', { forward: true, findNext: false })
+      );
+
+      fireEvent.click(bar!.querySelector('[data-e2e="find-close"]')!);
+      expect(stopFindInPage).toHaveBeenCalledWith('clearSelection');
     } finally {
       if (savedMode === null) localStorage.removeItem(storageKey);
       else localStorage.setItem(storageKey, savedMode);
       delete window.terminusNative;
+    }
+  });
+
+  // El aviso sigue teniendo sentido donde no hay invitado ni proxy: REAL directo.
+  it('avisa del cambio de modo cuando la página REAL va en iframe directo', async () => {
+    const storageKey = 'termbrowser.page-mode';
+    const savedMode = localStorage.getItem(storageKey);
+    localStorage.setItem(storageKey, 'real');
+
+    try {
+      renderSurface({ ...pageTab, viewMode: 'real', frameable: true });
+      const toggle = document.querySelector('button[aria-keyshortcuts="Control+F"]');
+      fireEvent.click(toggle!);
+
+      const status = document.querySelector('[data-e2e="find-status"]')!;
+      fireEvent.change(document.querySelector('[data-e2e="find-input"]')!, {
+        target: { value: 'Example' },
+      });
+
+      await waitFor(() => expect(status.getAttribute('data-find-blocked')).toBe('mode'));
+      expect(status.textContent).not.toBe('');
+    } finally {
+      if (savedMode === null) localStorage.removeItem(storageKey);
+      else localStorage.setItem(storageKey, savedMode);
     }
   });
 

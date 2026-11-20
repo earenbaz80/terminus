@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Bookmark, BrowserTab, PageMode, TerminalLogEntry, ThemeConfig } from '../types';
+import { Bookmark, BrowserTab, DownloadEntry, PageMode, TerminalLogEntry, ThemeConfig } from '../types';
 import { soundEffects } from '../utils/soundEffects';
 import { BOOT_ASCII } from '../utils/bootBanner';
 import { getLatencyGlow } from '../utils/latencyGlow';
@@ -17,6 +17,7 @@ import {
   Bookmark as BookmarkIcon,
   ChevronDown,
   ChevronUp,
+  CircleArrowDown,
   Clock3,
   Download,
   Globe2,
@@ -36,6 +37,7 @@ import { getTerminusSearchQuery, isTerminusSearchUrl } from '../utils/terminusSe
 import { isPrivateTargetUrl } from '../utils/networkPolicy';
 import { loadRecentSearches, recordRecentSearch } from '../utils/recentSearches';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
+import { DownloadsPanel } from './DownloadsPanel';
 import { useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/messages';
 import { SignalLostScene } from './SignalLostScene';
@@ -52,6 +54,11 @@ export const FOCUS_ADDRESS_EVENT = 'termbrowser:focus-address';
 interface WebBrowserSurfaceProps {
   theme: ThemeConfig;
   tab?: BrowserTab;
+  /**
+   * `false` para una pestaña que sigue montada en segundo plano: su página vive
+   * (audio, descargas, formularios) pero no puede robar el foco ni abrir paneles.
+   */
+  active?: boolean;
   onCommand: (cmd: string) => void;
   bookmarks: Bookmark[];
   onAddBookmark: (title: string, url: string) => void;
@@ -258,6 +265,7 @@ const buildAddressSuggestions = (
 export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   theme,
   tab,
+  active = true,
   onCommand,
   bookmarks,
   onAddBookmark,
@@ -309,10 +317,15 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findStatus, setFindStatus] = useState('');
+  // En NATIVO el recuento lo da `found-in-page` del invitado: «coincidencia de total».
+  const [findCount, setFindCount] = useState<{ index: number; total: number } | null>(null);
   // El modo activo no permite buscar dentro de la página (NATIVO o REAL directo):
   // se marca en el DOM para que el E2E lo compruebe sin leer texto traducido.
   const [findBlocked, setFindBlocked] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Descargas de la sesión: las publica el proceso principal y aquí solo se pintan.
+  const [downloads, setDownloads] = useState<DownloadEntry[]>([]);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [localZoom, setLocalZoom] = useState(1);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const nativeContainerRef = useRef<HTMLDivElement>(null);
@@ -400,10 +413,12 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   // Electron catches Ctrl/Cmd+F before Chromium handles it, including when the
   // focused document is a cross-origin REAL iframe whose keys never reach us.
   useEffect(() => {
+    // Solo la pestaña activa responde al atajo: con las superficies vivas, todas
+    // escuchan el mismo canal del proceso principal.
     const api = window.terminusDesktop;
-    if (!api?.onFindShortcut) return undefined;
+    if (!active || !api?.onFindShortcut) return undefined;
     return api.onFindShortcut(() => setFindOpen(true));
-  }, []);
+  }, [active]);
 
   // The tab's own choice wins; otherwise a saved site preference, and finally the
   // real page by default: dark and text are opt-in per site.
@@ -472,6 +487,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
 
   // Ctrl/Cmd+L is handled by the app and lands here: focus and select the address.
   useEffect(() => {
+    if (!active) return undefined;
     const focusAddress = () => {
       const input = addressInputRef.current;
       if (!input) return;
@@ -481,7 +497,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     };
     window.addEventListener(FOCUS_ADDRESS_EVENT, focusAddress);
     return () => window.removeEventListener(FOCUS_ADDRESS_EVENT, focusAddress);
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     if (!commandsOpen) return;
@@ -603,6 +619,9 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     // Release the field so the page can take keyboard focus; the custom caret stays visible.
     addressInputRef.current?.blur();
     onCommand(raw);
+    // Un comando puede abrir otra pestaña y dejar esta en segundo plano: si no es
+    // una URL, el campo se vacía para que no quede el texto del comando dentro.
+    if (!/^(https?:\/\/|[^\s]+\.[^\s]{2,})/i.test(raw)) setAddress('');
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -705,16 +724,41 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   // Repetir `home` no cambia de pantalla: el aviso enfoca el campo al momento. Al llegar
   // desde una página se encarga el efecto de abajo, cuando el inicio aparece.
   useEffect(() => {
+    if (!active) return undefined;
     const focusStartInput = () => startInputRef.current?.focus();
     window.addEventListener(HOME_FOCUS_EVENT, focusStartInput);
     return () => window.removeEventListener(HOME_FOCUS_EVENT, focusStartInput);
-  }, []);
+  }, [active]);
 
   // Llegar al inicio (arranque o `home`) deja el campo listo para escribir, como la
   // página de resultados cuando no tiene consulta.
   useEffect(() => {
-    if (startPageVisible) startInputRef.current?.focus();
-  }, [startPageVisible]);
+    if (startPageVisible && active) startInputRef.current?.focus();
+  }, [startPageVisible, active]);
+
+  // La lista de descargas la manda el proceso principal: el renderer no ve
+  // `will-download`, así que escucha el aviso y pide el estado inicial al montar.
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? window.terminusDesktop : undefined;
+    if (!bridge?.onDownloadsUpdate) return undefined;
+
+    let alive = true;
+    void bridge
+      .listDownloads?.()
+      .then((items) => {
+        if (alive && Array.isArray(items)) setDownloads(items);
+      })
+      .catch(() => undefined);
+
+    const unsubscribe = bridge.onDownloadsUpdate((update) => {
+      if (Array.isArray(update?.downloads)) setDownloads(update.downloads);
+    });
+
+    return () => {
+      alive = false;
+      unsubscribe?.();
+    };
+  }, []);
   const currentUrl = hasPage && tab ? tab.url : '';
   const savedBookmark = bookmarks.find((bm) => sameUrl(bm.url, currentUrl));
   const proxied = (view: PageMode) => `/api/view?url=${encodeURIComponent(tab?.url ?? '')}&mode=${view}`;
@@ -750,23 +794,84 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     else setLocalZoom(bounded);
   }, [onSetZoom]);
 
-  const sendFind = useCallback((backwards = false) => {
-    if (!findQuery.trim()) {
-      setFindStatus('');
-      setFindBlocked(false);
+  const nativeViewRef = useRef<NativeWebviewElement | null>(null);
+  const nativeReadyRef = useRef(false);
+  // Última consulta enviada al invitado y su recuento: `findNext` depende de ella.
+  const nativeFindQueryRef = useRef('');
+  // Consulta que no pudo entrar porque el invitado aún no tenía `dom-ready`.
+  const pendingNativeFindRef = useRef<{ query: string; backwards: boolean } | null>(null);
+  const findOpenRef = useRef(findOpen);
+  findOpenRef.current = findOpen;
+  // `found-in-page` llega como evento del invitado, con la consulta ya resuelta.
+  const foundInPageRef = useRef<(result?: { matches?: number; activeMatchOrdinal?: number }) => void>(
+    () => {}
+  );
+  foundInPageRef.current = (result) => {
+    if (!nativeViewActive) return;
+    const total = Number(result?.matches) || 0;
+    const index = Number(result?.activeMatchOrdinal) || 0;
+    setFindBlocked(false);
+    if (total <= 0) {
+      setFindCount(null);
+      setFindStatus(t('find.noMatch'));
       return;
     }
-    // En NATIVO no hay iframe proxied al que mandar la búsqueda, así que el aviso es
-    // el mismo que en REAL: para buscar dentro de la página hay que pasar a OSCURO
-    // o TEXTO. Sin esto el modo nativo se quedaba sin decir nada al escribir.
-    if (!usesProxy || nativeViewActive) {
+    setFindCount({ index, total });
+    setFindStatus(t('find.nativeCount', { index, total }));
+  };
+
+  /**
+   * Quita el resaltado del invitado. Antes de `dom-ready` la `<webview>` no admite
+   * `stopFindInPage` y lanza: una excepción en un efecto tumba toda la interfaz.
+   */
+  const clearNativeFind = () => {
+    nativeFindQueryRef.current = '';
+    if (!nativeReadyRef.current) return;
+    try {
+      nativeViewRef.current?.stopFindInPage?.('clearSelection');
+    } catch {
+      // El invitado se está recargando; el resaltado se va con la navegación.
+    }
+  };
+
+  const sendFind = useCallback((backwards = false) => {
+    const query = findQuery.trim();
+    if (!query) {
+      setFindStatus('');
+      setFindBlocked(false);
+      setFindCount(null);
+      clearNativeFind();
+      return;
+    }
+
+    // NATIVO: la página es un invitado de Chromium, así que la búsqueda y el
+    // resaltado los hace él. `findNext` distingue «refinar la consulta» de «ir a la
+    // siguiente coincidencia»; sin él, cambiar de consulta reusaría la anterior.
+    if (nativeViewActive) {
+      setFindBlocked(false);
+      const view = nativeViewRef.current;
+      if (!view?.findInPage) return;
+      const findNext = nativeFindQueryRef.current === query;
+      try {
+        view.findInPage(query, { forward: !backwards, findNext });
+        nativeFindQueryRef.current = query;
+        pendingNativeFindRef.current = null;
+      } catch {
+        // La `<webview>` no acepta `findInPage` hasta `dom-ready`: se reintenta ahí.
+        nativeFindQueryRef.current = '';
+        pendingNativeFindRef.current = { query, backwards };
+      }
+      return;
+    }
+
+    if (!usesProxy) {
       setFindStatus(t('find.changeMode'));
       setFindBlocked(true);
       return;
     }
     setFindBlocked(false);
     iframeRef.current?.contentWindow?.postMessage(
-      { source: 'termbrowser-find', query: findQuery, backwards },
+      { source: 'termbrowser-find', query, backwards },
       '*'
     );
   }, [findQuery, usesProxy, nativeViewActive, t]);
@@ -775,8 +880,6 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   // que ocupa su hueco del layout y la interfaz se pinta encima sin recortarla.
   const nativeNavigationRef = useRef(onNativeNavigation);
   nativeNavigationRef.current = onNativeNavigation;
-  const nativeViewRef = useRef<NativeWebviewElement | null>(null);
-  const nativeReadyRef = useRef(false);
   const nativeZoomRef = useRef(zoom);
   nativeZoomRef.current = zoom;
   const pendingNativeUrlRef = useRef<string | null>(null);
@@ -801,6 +904,17 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     const onReady = () => {
       nativeReadyRef.current = true;
       view.setZoomFactor?.(nativeZoomRef.current);
+      // Si el buscador se abrió antes de este evento, la consulta entra ahora.
+      const pendingFind = pendingNativeFindRef.current;
+      pendingNativeFindRef.current = null;
+      if (pendingFind && findOpenRef.current) {
+        try {
+          view.findInPage?.(pendingFind.query, { forward: !pendingFind.backwards, findNext: false });
+          nativeFindQueryRef.current = pendingFind.query;
+        } catch {
+          // Se queda sin recuento; volver a escribir en el campo lo reintenta.
+        }
+      }
       const pending = pendingNativeUrlRef.current;
       pendingNativeUrlRef.current = null;
       if (pending && pending !== view.getURL?.()) void view.loadURL?.(pending);
@@ -809,6 +923,10 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     view.addEventListener('did-navigate', sync);
     view.addEventListener('did-navigate-in-page', sync);
     view.addEventListener('page-title-updated', sync);
+    // Chromium avisa cada vez que resuelve una búsqueda: de ahí sale el recuento.
+    const onFoundInPage = (event: Event) =>
+      foundInPageRef.current((event as unknown as { result?: { matches?: number } }).result);
+    view.addEventListener('found-in-page', onFoundInPage);
 
     host.replaceChildren(view);
 
@@ -817,6 +935,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       view.removeEventListener('did-navigate', sync);
       view.removeEventListener('did-navigate-in-page', sync);
       view.removeEventListener('page-title-updated', sync);
+      view.removeEventListener('found-in-page', onFoundInPage);
+      nativeFindQueryRef.current = '';
       host.replaceChildren();
       nativeViewRef.current = null;
       nativeReadyRef.current = false;
@@ -903,11 +1023,20 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     if (!findQuery.trim()) {
       setFindStatus('');
       setFindBlocked(false);
+      setFindCount(null);
+      clearNativeFind();
       return;
     }
     const timer = window.setTimeout(() => sendFind(false), 100);
     return () => window.clearTimeout(timer);
   }, [findQuery, findOpen, usesProxy, sendFind]);
+
+  // Cerrar el buscador o salir de NATIVO deja de resaltar en el invitado.
+  useEffect(() => {
+    if (findOpen && nativeViewActive) return;
+    clearNativeFind();
+    setFindCount(null);
+  }, [findOpen, nativeViewActive]);
 
   // The proxied iframe reports whether window.find() located a match.
   useEffect(() => {
@@ -930,6 +1059,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       setFindOpen(false);
       setFindStatus('');
       setFindBlocked(false);
+      setFindCount(null);
+      clearNativeFind();
     };
     window.addEventListener('keydown', closeFindWithEscape);
     return () => window.removeEventListener('keydown', closeFindWithEscape);
@@ -1368,6 +1499,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
               // `mode` = el buscador no entra en la página con el modo activo; el E2E
               // se ancla a esto en vez de al texto traducido de `find.changeMode`.
               data-find-blocked={findBlocked ? 'mode' : undefined}
+              // Recuento nativo `actual/total`; ausente mientras no hay resultado.
+              data-find-count={findCount ? `${findCount.index}/${findCount.total}` : undefined}
             >
               {findStatus}
             </span>
@@ -1397,6 +1530,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
                 setFindOpen(false);
                 setFindQuery('');
                 setFindStatus('');
+                setFindCount(null);
+                clearNativeFind();
               }}
               className="shrink-0 cursor-pointer p-0.5 opacity-65 hover:opacity-100"
               title={t('browser.findCloseTitle')}
@@ -1495,6 +1630,47 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
             >
               <Download className="w-3.5 h-3.5" />
             </a>
+          )}
+          {typeof window !== 'undefined' && window.terminusDesktop?.onDownloadsUpdate && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEffects.playKeyClick();
+                  setDownloadsOpen((open) => !open);
+                }}
+                className="border-l p-1.5 cursor-pointer transition-colors hover:bg-white/10"
+                style={{ borderColor: theme.border, color: downloadsOpen ? theme.accent : theme.text }}
+                title={t('downloads.title')}
+                aria-label={t('downloads.open')}
+                aria-expanded={downloadsOpen}
+                data-e2e="downloads-toggle"
+              >
+                <CircleArrowDown className="w-3.5 h-3.5" />
+                {downloads.length > 0 && (
+                  <span
+                    className="absolute -top-0.5 -right-0.5 min-w-3 px-0.5 text-center text-[8px] leading-3"
+                    style={{ backgroundColor: theme.accent, color: theme.cardBg }}
+                    data-e2e="downloads-count"
+                  >
+                    {downloads.length}
+                  </span>
+                )}
+              </button>
+              {downloadsOpen && (
+                <DownloadsPanel
+                  theme={theme}
+                  downloads={downloads}
+                  onCancel={(id) => {
+                    void window.terminusDesktop?.cancelDownload?.(id);
+                  }}
+                  onShow={(id) => {
+                    void window.terminusDesktop?.showDownload?.(id);
+                  }}
+                  onClose={() => setDownloadsOpen(false)}
+                />
+              )}
+            </div>
           )}
           <button
             type="button"

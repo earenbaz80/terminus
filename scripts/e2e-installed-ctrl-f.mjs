@@ -68,6 +68,9 @@ const FIND_STATUS_SELECTOR = '[data-e2e="find-status"], [aria-live="polite"]';
 // antiguos) se usan los `aria-pressed` fuera de un diálogo. REAL va siempre primero
 // en PAGE_MODES, exponga la app tres modos o cuatro (con NATIVO).
 const REAL_MODE_INDEX = 0;
+// Palabra que aparece tres veces en example.com («Example Domain», «This domain»,
+// «this domain»): el paso 2 la busca dentro del invitado y exige recuento y avance.
+const NATIVE_FIND_QUERY = 'domain';
 // La consulta, el estado y el modo del iframe salen de una sola lectura.
 const FIND_BAR_EXPRESSION = `(() => {
   const dialog = ${FIND_DIALOG_EXPRESSION};
@@ -85,6 +88,8 @@ const FIND_BAR_EXPRESSION = `(() => {
     // data-find-blocked="mode" lo pone la app cuando el modo activo no deja buscar
     // dentro de la página: el E2E se ancla a eso, no al texto traducido del aviso.
     blocked: status?.getAttribute('data-find-blocked') ?? null,
+    // data-find-count="actual/total": lo pinta la app con el resultado nativo.
+    count: status?.getAttribute('data-find-count') ?? null,
     focused: document.activeElement === input,
     documentFocused: document.hasFocus(),
     frameMode,
@@ -857,6 +862,8 @@ async function main() {
     20000,
   );
 
+  pass(`modo NATIVO: la página vive en el <webview> (${nativePage.webview}) sin iframe proxied.`);
+
   const nativeFindOpened = await cdp.evaluate(`(() => {
     const toggle = document.querySelector('${FIND_TOGGLE}');
     if (!toggle) return false;
@@ -870,20 +877,58 @@ async function main() {
   );
   assert.equal(await waitFindOpen(cdp, 5000), true, 'El buscador no se abrió en modo NATIVO.');
 
-  await setFindQuery(cdp, 'Example');
-  const changeMode = await waitForExpression(
+  // NATIVO busca dentro del invitado con `findInPage`: Chromium resalta y devuelve
+  // el recuento por `found-in-page`, que la app pinta como `data-find-count`.
+  await setFindQuery(cdp, NATIVE_FIND_QUERY);
+  const firstMatch = await waitForExpression(
     cdp,
     FIND_BAR_EXPRESSION,
-    (state) => state.blocked === 'mode',
-    'el buscador marcado como bloqueado por el modo',
+    (state) => /^\d+\/\d+$/.test(String(state.count ?? '')),
+    'el recuento de coincidencias que da el invitado',
     10000,
   );
-  assert.equal(changeMode.frameMode, null, 'El modo NATIVO no debe tener un iframe proxied.');
-  assert.notEqual(changeMode.status, '', 'El buscador no explicó por qué no busca.');
+  assert.equal(firstMatch.blocked, null, 'En NATIVO el buscador no debe pedir cambiar de modo.');
+  assert.equal(firstMatch.frameMode, null, 'El modo NATIVO no debe tener un iframe proxied.');
+  const [firstIndex, firstTotal] = String(firstMatch.count).split('/').map(Number);
+  assert.ok(
+    firstTotal >= 2,
+    `«${NATIVE_FIND_QUERY}» debe aparecer más de una vez en la página y aparece ${firstTotal}.`,
+  );
+
+  assert.equal(
+    await clickFindControl(cdp, 'next', 1),
+    true,
+    'No se encontró el botón «siguiente» del buscador en modo NATIVO.',
+  );
+  const nextMatch = await waitForExpression(
+    cdp,
+    FIND_BAR_EXPRESSION,
+    (state) => String(state.count ?? '') !== String(firstMatch.count),
+    'la siguiente coincidencia',
+    5000,
+  );
+
+  assert.equal(
+    await clickFindControl(cdp, 'prev', 0),
+    true,
+    'No se encontró el botón «anterior» del buscador en modo NATIVO.',
+  );
+  const prevMatch = await waitForExpression(
+    cdp,
+    FIND_BAR_EXPRESSION,
+    (state) => String(state.count ?? '') === String(firstMatch.count),
+    'volver a la coincidencia anterior',
+    5000,
+  );
+  assert.equal(
+    String(prevMatch.count).split('/')[1],
+    String(firstTotal),
+    'El total de coincidencias cambió al navegar entre ellas.',
+  );
   await closeFindBar(cdp);
 
   pass(
-    `modo NATIVO: la página vive en el <webview> (${nativePage.webview}) y el buscador pide cambiar de modo («${changeMode.status}»).`,
+    `Ctrl+F busca dentro del <webview> con findInPage: «${NATIVE_FIND_QUERY}» da ${firstTotal} coincidencias (${firstIndex}/${firstTotal}) y siguiente/anterior las recorren (${nextMatch.count} → ${prevMatch.count}), sin pedir cambio de modo.`,
   );
 
   // La vista REAL usa un iframe directo (sin `?mode`), así que no pasa por searchInView:

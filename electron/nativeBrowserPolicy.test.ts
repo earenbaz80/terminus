@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNativePartition, isWebUrl } from './nativeBrowserPolicy.cjs';
+import { isNativePartition, isWebUrl, shouldOpenInTab } from './nativeBrowserPolicy.cjs';
 
 describe('native browser policy', () => {
   it('accepts only http(s) navigation targets', () => {
@@ -9,6 +9,18 @@ describe('native browser policy', () => {
     expect(isWebUrl('javascript:alert(1)')).toBe(false);
     expect(isWebUrl('about:blank')).toBe(false);
     expect(isWebUrl('')).toBe(false);
+  });
+
+  it('sends target=_blank to a new tab only for allowed web links', () => {
+    expect(shouldOpenInTab('https://example.com/x')).toBe(true);
+    expect(shouldOpenInTab('http://127.0.0.1:8080/a')).toBe(true);
+    expect(shouldOpenInTab('javascript:alert(1)')).toBe(false);
+    expect(shouldOpenInTab('file:///C:/Windows')).toBe(false);
+    expect(shouldOpenInTab('mailto:hola@example.com')).toBe(false);
+    expect(shouldOpenInTab('about:blank')).toBe(false);
+    // Lo que bloquea EasyList no gana una pestaña solo por abrirse en otra pestaña.
+    expect(shouldOpenInTab('https://ads.example.com/x', () => true)).toBe(false);
+    expect(shouldOpenInTab('https://example.com/x', () => false)).toBe(true);
   });
 
   it('only embeds pages in the per-site sessions the app owns', () => {

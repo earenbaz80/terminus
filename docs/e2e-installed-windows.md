@@ -137,7 +137,7 @@ Los pasos 1 a 7 son del job `checks`; el resto, de `windows`, que ejecuta en ord
 12. Detiene cualquier instancia de Terminus que el instalador haya abierto.
 13. Define `TERMINUS_INSTALLED_EXE` apuntando a `%LOCALAPPDATA%\Programs\Terminus\Terminus.exe`.
 14. Ejecuta `node scripts/e2e-run.mjs`: recorre `scripts/e2e-suites.mjs`, lanza cada suite con `npm run`, guarda su salida en `artifacts/e2e/<log>` y falla con el primer código distinto de cero. El CI lo llama sin `--only`: cuando el gate pide el E2E corre las cuatro suites, así que la lista vive solo en `scripts/e2e-suites.mjs` y no se duplica en el workflow. Medido sobre la app instalada el 14 de noviembre de 2026, `ui` tarda 12 s, `ui-de` otros 12 s y `ctrl-f` 14 s, por eso la de alemán no se restringe a cambios de textos o i18n: sus pasos comprueban disposición, chips, pestañas e historial con cadenas alemanas, que se rompen por CSS o por estructura y no solo cuando cambian los textos. `ui-de` es la misma suite con `TERMINUS_E2E_LOCALE=de`. La cuarta, `network`, no usa el instalador: lanza el build de `release/win-unpacked` (`TERMINUS_BUILD_DIR` para apuntar a otro) y después `electron .` sobre el árbol de trabajo, porque su segundo tramo mide lo que pasa en `desktop:dev`, donde el servidor es un proceso hijo. Tarda unos 19 s con el build ya empaquetado (medido en local el 15 de noviembre de 2026) y no necesita internet: el destino 127.0.0.1 lo sirve el propio guion. Comprueba los dos endpoints que aplican la política, `/api/view` y `/api/dns`, con el interruptor en cada posición. Con `TERMINUS_E2E_NETWORK_SKIP_DEV=1` corre solo el tramo empaquetado, 8 de los 16 pasos, para aislar un runner donde el arranque en desarrollo es inestable: el total esperado lo ajusta `expectedSteps()` en `scripts/e2e-suites.mjs` y el log escribe `OMITIDO desktop:dev`, así que el recuento cuadra y la omisión queda visible.
-15. Compara el recuento: cada log tiene que cerrar con `STEPS: n/m` igual al total que declara su entrada de `scripts/e2e-suites.mjs`, la misma lista que leen los guiones, así que el esperado no se puede desincronizar. El resumen del paso queda `ctrl-f 6/6 · ui 12/12 · ui-de 12/12 · network 16/16`.
+15. Compara el recuento: cada log tiene que cerrar con `STEPS: n/m` igual al total que declara su entrada de `scripts/e2e-suites.mjs`, la misma lista que leen los guiones, así que el esperado no se puede desincronizar. El resumen del paso queda `ctrl-f 7/7 · ui 13/13 · ui-de 13/13 · network 16/16`.
 16. Publica los logs del E2E y un resumen del job, que incluye el estado del E2E de adblock (`OK`, `FAIL` u `Omitido (sin red)`) con el enlace a su captura.
 
 El E2E se ejecuta cuando se cumple una de estas condiciones:
@@ -165,13 +165,14 @@ La línea del runner deja claro dónde corrió el E2E: el preflight solo comprue
 El log debe contener líneas equivalentes a:
 
 ```text
-[e2e-installed-ctrl-f] PASS 1/6: modo NATIVO: la página vive en el <webview> (https://example.com/) y el buscador pide cambiar de modo («Cambia a OSCURO o TEXTO para buscar dentro de esta página.»). (1,4 s)
-[e2e-installed-ctrl-f] PASS 2/6: Ctrl+F abrió el buscador en la app instalada. (2,9 s)
-[e2e-installed-ctrl-f] PASS 3/6: búsqueda en OSCURO (Coincidencia encontrada). (1,7 s)
-[e2e-installed-ctrl-f] PASS 4/6: búsqueda en TEXTO (Coincidencia encontrada). (1,5 s)
-[e2e-installed-ctrl-f] PASS 5/6: siguiente y anterior buscan otra coincidencia (1 y 1 búsquedas, Coincidencia encontrada). (1,4 s)
-[e2e-installed-ctrl-f] PASS 6/6: Escape cerró el buscador y el conmutador volvió a su sitio. (0,0 s)
-[e2e-installed-ctrl-f] STEPS: 6/6
+[e2e-installed-ctrl-f] PASS 1/7: modo NATIVO: la página vive en el <webview> (https://example.com/) sin iframe proxied. (1,4 s)
+[e2e-installed-ctrl-f] PASS 2/7: Ctrl+F busca dentro del <webview> con findInPage: «domain» da 2 coincidencias (1/2) y siguiente/anterior las recorren (2/2 → 1/2), sin pedir cambio de modo. (0,2 s)
+[e2e-installed-ctrl-f] PASS 3/7: Ctrl+F abrió el buscador en la app instalada. (2,9 s)
+[e2e-installed-ctrl-f] PASS 4/7: búsqueda en OSCURO (Coincidencia encontrada). (1,7 s)
+[e2e-installed-ctrl-f] PASS 5/7: búsqueda en TEXTO (Coincidencia encontrada). (1,5 s)
+[e2e-installed-ctrl-f] PASS 6/7: siguiente y anterior buscan otra coincidencia (1 y 1 búsquedas, Coincidencia encontrada). (1,4 s)
+[e2e-installed-ctrl-f] PASS 7/7: Escape cerró el buscador y el conmutador volvió a su sitio. (0,0 s)
+[e2e-installed-ctrl-f] STEPS: 7/7
 ```
 
 Artefactos relevantes:
@@ -231,7 +232,8 @@ TERMINUS_INSTALLED_EXE="C:\ruta\Terminus.exe" npm run test:e2e:installed
 | Campo de consulta | `[data-e2e="find-input"]` | Que el buscador sigue siendo un `<input>` controlado por React. Sin el atributo se toma el primer `input` del diálogo. | El guion escribe con el setter nativo de `HTMLInputElement` y un evento `input`; un `<textarea>` o un campo con máscara rompen la escritura. |
 | Botones del buscador | `[data-e2e="find-prev"]`, `[data-e2e="find-next"]` y `[data-e2e="find-close"]` | Que cada control conserva su `data-e2e`. Sin ellos se pulsa por posición (0 anterior, 1 siguiente, 2 cerrar). | Añadir o mover botones solo afecta al respaldo posicional. |
 | Estado de la búsqueda | texto de `[data-e2e="find-status"]` (o del `[aria-live="polite"]` del diálogo) | Que el texto puede estar traducido: nunca se compara con un literal. | Solo hay que mantener que el estado cambie al cambiar la consulta y se estabilice. |
-| Buscador bloqueado por el modo | `[data-find-blocked="mode"]` en `[data-e2e="find-status"]` | Que la app marca el estado cuando el modo activo (NATIVO o REAL directo) no deja buscar dentro de la página, en vez de solo pintar el aviso traducido. Es el ancla del paso 1, que así no depende de `find.changeMode` en ningún idioma. | Sin el atributo el paso 1 falla: ya no se compara el texto del aviso. |
+| Buscador bloqueado por el modo | `[data-find-blocked="mode"]` en `[data-e2e="find-status"]` | Que la app marca el estado cuando el modo activo no deja buscar dentro de la página. Hoy solo lo pone la vista REAL directa: en NATIVO la búsqueda entra en el invitado con `findInPage`, así que el paso 2 exige justamente que el atributo **no** esté. | Sin el atributo se pierde el ancla del aviso en REAL directo; si aparece en NATIVO, el paso 2 falla. |
+| Recuento de la búsqueda nativa | `[data-find-count="actual/total"]` en `[data-e2e="find-status"]` | Que la app pinta el resultado que devuelve `found-in-page` del invitado. El paso 2 lo exige con dos enteros, comprueba que el total es mayor que uno y que «siguiente» y «anterior» cambian el actual. | Sin el atributo falla el paso 2: no hay forma de leer el recuento sin entrar en el invitado. |
 | Chip reciente del inicio | `[data-e2e="recent-search"]` | Que las chips de búsquedas recordadas llevan ese atributo, que la más nueva va la primera y que la chip está visible (tiene rectángulos de cliente). | Sin el atributo falla el paso 5: no hay respaldo por posición que distinga una reciente de una sugerencia fija. |
 | Grupo de chips del inicio | `[data-e2e="start-chips"]` y `[data-e2e="start-chips-label"]` | Que las chips cuelgan de ese contenedor y que la etiqueta del grupo («Prueba con») es hija suya. El paso 6 cuenta ahí recientes y fijas, y comprueba que la etiqueta no tiene rectángulos a 432 px. | Sin el contenedor no se pueden separar recientes de fijas; sin la etiqueta no se puede comprobar su recorte. |
 | Iframe proxificado | primer `iframe` del documento y el parámetro `mode` de su `src` | Que el `src` proxificado lleva `?mode=real\|dark\|text` y que no hay otro `iframe` antes en el DOM. | Sin el parámetro `mode` fallan las esperas de `OSCURO` y `TEXTO`. |

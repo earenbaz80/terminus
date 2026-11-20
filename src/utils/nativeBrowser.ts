@@ -27,6 +27,10 @@ export interface NativeWebviewElement extends HTMLElement {
   getURL?(): string;
   getTitle?(): string;
   setZoomFactor?(factor: number): void;
+  /** Busca dentro del invitado; Chromium resalta las coincidencias. */
+  findInPage?(text: string, options?: { forward?: boolean; findNext?: boolean }): number;
+  /** Corta la búsqueda actual; `clearSelection` quita el resaltado. */
+  stopFindInPage?(action?: 'clearSelection' | 'keepSelection' | 'activateSelection'): void;
 }
 
 export const createNativeWebview = (): NativeWebviewElement =>

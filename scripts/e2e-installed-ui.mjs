@@ -10,6 +10,9 @@
  *   - esa misma búsqueda reaparece como chip reciente del inicio, con su ancla,
  *   - pestañas: una segunda pestaña navega por su cuenta, la primera conserva URL
  *     e historial, y las dos se restauran al recargar el renderer.
+ *   - descargas: un enlace con `Content-Disposition` en un fixture local llega al
+ *     `will-download` del proceso principal, se escribe en la carpeta forzada y
+ *     aparece en el panel con su estado.
  *
  * Arranca el ejecutable instalado con un perfil temporal y habla con él por CDP.
  * No usa `electron .` ni `example.com`.
@@ -28,6 +31,8 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { suiteSteps } from './e2e-suites.mjs';
 import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
@@ -59,7 +64,11 @@ const HISTORY_KEY = 'termbrowser_cmd_history_v1';
 const UI_MARKER = 'terminus-theme-select';
 // La barra de direcciones se identifica por su relación con la lista de sugerencias
 // (atributos del DOM, no el aria-label del idioma activo), así la prueba sirve en cualquier idioma.
-const ADDRESS_SELECTOR = 'input[aria-controls="terminus-address-suggestions"]';
+// Cada pestaña web monta su propia superficie, así que la barra que se usa es la
+// del panel activo: sin este prefijo `querySelector` devolvería la de una pestaña
+// de fondo, que además está invisible y no acepta foco.
+const ACTIVE_PANE = '[data-e2e="browser-pane"][data-active="true"]';
+const ADDRESS_SELECTOR = `${ACTIVE_PANE} input[aria-controls="terminus-address-suggestions"]`;
 const SEARCH_QUERY = 'terminus e2e ui';
 const LOCALE_KEY = 'terminus_locale_v1';
 // La sesión que la app guarda y restaura: es la fuente de verdad de las pestañas.
@@ -69,13 +78,22 @@ const SECOND_QUERY = 'terminus e2e segunda pestana';
 const e2eLocale = (process.env.TERMINUS_E2E_LOCALE ?? '').trim();
 const START_FORM = 'form[role="search"]';
 // Ancla propia del campo de búsqueda del inicio: no depende de su posición ni del idioma.
-const START_INPUT = 'input[data-e2e="start-search-input"]';
+// Cada pestaña web monta su propio inicio, así que se escribe en el del panel
+// activo; el segundo término cubre un inicio que no cuelgue de ninguna pestaña (no
+// hay negación de ancestro en CSS, por eso la unión en vez de `:not()` anidado).
+const START_INPUT =
+  `${ACTIVE_PANE} input[data-e2e="start-search-input"], ` +
+  'input[data-e2e="start-search-input"]:not([data-e2e="browser-pane"] input)';
 // El `<header>` lleva su propio formulario de búsqueda, así que en el DOM conviven dos
 // `form[role="search"]`: el de la cabecera y el de la pantalla (inicio o resultados).
 // `PAGE_SEARCH_FORMS` deja solo los de la pantalla y `START_FORM_SCOPED` ancla el del
 // inicio por su campo, sin depender de cuál aparezca primero en el documento.
-const PAGE_SEARCH_FORMS = `[...document.querySelectorAll(${JSON.stringify(START_FORM)})].filter((form) => !form.closest('header'))`;
-const START_FORM_SCOPED = `${START_FORM}:has(${START_INPUT})`;
+const PAGE_SEARCH_FORMS = `[...document.querySelectorAll(${JSON.stringify(START_FORM)})].filter((form) =>
+  !form.closest('header') &&
+  (!form.closest('[data-e2e="browser-pane"]') || form.closest(${JSON.stringify(ACTIVE_PANE)})))`;
+// `:has()` no admite la lista de `START_INPUT` (dos alternativas): dentro de `:has`
+// va el selector simple del campo.
+const START_FORM_SCOPED = `${START_FORM}:has(input[data-e2e="start-search-input"])`;
 // Cajas donde se escribe durante la corrida; `where` de una tecla ajena dice en cuál cayó.
 const STRAY_FIELDS = [
   ['inicio', START_INPUT],
@@ -95,6 +113,63 @@ const THEMES = {
   msdos: { id: 'ms-dos', bg: '#000080', rgb: 'rgb(0, 0, 128)' },
   matrix: { id: 'matrix-dark', bg: '#020402', rgb: 'rgb(2, 4, 2)' },
 };
+// Descargas: la carpeta se fuerza por entorno para que el paso no dependa de pulsar
+// un diálogo nativo, y el archivo se comprueba en disco además de en el panel.
+const DOWNLOAD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'terminus-e2e-downloads-'));
+const DOWNLOADS_EXPRESSION = `(() => {
+  const panel = document.querySelector('[data-e2e="downloads"]');
+  const rows = [...document.querySelectorAll('[data-e2e="download-row"]')].map((row) => ({
+    name: row.getAttribute('data-download-name'),
+    state: row.getAttribute('data-download-state'),
+    text: (row.textContent ?? '').trim(),
+  }));
+  return { open: Boolean(panel), rows };
+})()`;
+
+/** Fixture local: una página con un enlace que responde como descarga. */
+function startDownloadFixture() {
+  const fileName = 'terminus-e2e.txt';
+  const body = 'descarga real de terminus\n';
+
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((request, response) => {
+      if ((request.url || '').startsWith('/archivo')) {
+        response.writeHead(200, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+          'Cache-Control': 'no-store',
+        });
+        response.end(body);
+        return;
+      }
+      response.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      response.end(`<!doctype html>
+<html lang="es">
+  <head><meta charset="utf-8"><title>Terminus E2E descargas</title></head>
+  <body>
+    <main>
+      <h1>Fixture de descargas</h1>
+      <a id="dl" href="/archivo">Descargar el archivo</a>
+    </main>
+  </body>
+</html>`);
+    });
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      if (!port) {
+        server.close();
+        reject(new Error('El fixture de descargas no pudo abrir un puerto.'));
+        return;
+      }
+      resolve({ server, pageUrl: `http://127.0.0.1:${port}/`, fileName, body });
+    });
+  });
+}
 
 /** Anota un paso superado, lo numera sobre el total y registra lo que tardó. */
 function pass(message) {
@@ -109,6 +184,7 @@ const installedExe = process.env.TERMINUS_INSTALLED_EXE
   : path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Terminus', 'Terminus.exe');
 
 let app = null;
+let downloadFixture = null;
 
 /**
  * Estado de la sesión guardada más lo que muestra la interfaz: pestañas persistidas
@@ -534,6 +610,8 @@ async function main() {
       // La prueba no navega fuera de la app; evita depender de la política de red del usuario.
       TERMINUS_BLOCK_PRIVATE: '0',
       TERMINUS_NETWORK_POLICY: 'local',
+      // Las descargas van a una carpeta temporal conocida, sin diálogo nativo.
+      TERMINUS_DOWNLOAD_DIR: DOWNLOAD_DIR,
     },
   });
   const cdp = app.client;
@@ -1312,6 +1390,76 @@ async function main() {
     `búsqueda «${race.query}» en vuelo (intento ${race.attempt}, red emulada) y salto a la pestaña 2: la 2 sigue en «${race.otherTab.query}» y la 1 resuelve la suya, sin quedarse cargando.`,
   );
 
+  // 13. Descarga real: el enlace del fixture responde con `Content-Disposition`,
+  //     el proceso principal lo escribe en la carpeta forzada y el panel lo lista
+  //     como completado. Se comprueba el archivo en disco, no solo la interfaz.
+  downloadFixture = await startDownloadFixture();
+  await clickTab(cdp, 1);
+  await runCommand(cdp, `goto ${downloadFixture.pageUrl}`);
+  await waitForExpression(
+    cdp,
+    `(() => {
+      // Cada pestaña web monta su propia superficie: el invitado que interesa es el
+      // del panel activo, no el primero del documento.
+      const pane = document.querySelector('[data-e2e="browser-pane"][data-active="true"]');
+      const view = pane ? pane.querySelector('webview') : document.querySelector('webview');
+      return { has: Boolean(view), url: view?.getURL?.() ?? null };
+    })()`,
+    (state) => state.has && state.url === downloadFixture.pageUrl,
+    'la página del fixture de descargas en la pestaña nativa',
+    30000,
+  );
+
+  const clickedDownload = await cdp.evaluate(`(() => {
+    const pane = document.querySelector('[data-e2e="browser-pane"][data-active="true"]');
+    const view = pane ? pane.querySelector('webview') : document.querySelector('webview');
+    if (!view || typeof view.executeJavaScript !== 'function') return false;
+    return Promise.resolve(
+      view.executeJavaScript('(() => { const link = document.getElementById("dl"); if (!link) return false; link.click(); return true; })()')
+    ).then((value) => Boolean(value));
+  })()`);
+  assert.equal(clickedDownload, true, 'No se pudo pulsar el enlace de descarga del fixture.');
+
+  const expectedFile = path.join(DOWNLOAD_DIR, downloadFixture.fileName);
+  const fileDeadline = Date.now() + 25000;
+  let fileContent = null;
+  while (Date.now() < fileDeadline) {
+    if (fs.existsSync(expectedFile)) {
+      fileContent = fs.readFileSync(expectedFile, 'utf8');
+      if (fileContent === downloadFixture.body) break;
+    }
+    await sleep(200);
+  }
+  assert.equal(
+    fileContent,
+    downloadFixture.body,
+    `La descarga no llegó a ${expectedFile} con su contenido.`,
+  );
+
+  const openedPanel = await cdp.evaluate(`(() => {
+    const button = document.querySelector('[data-e2e="downloads-toggle"]');
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert.equal(openedPanel, true, 'No se encontró el botón de descargas en la barra.');
+
+  const listed = await waitForExpression(
+    cdp,
+    DOWNLOADS_EXPRESSION,
+    (state) =>
+      state.open &&
+      state.rows.some((row) => row.name === downloadFixture.fileName && row.state === 'completed'),
+    'la descarga completada en el panel',
+    20000,
+  );
+  const row = listed.rows.find((entry) => entry.name === downloadFixture.fileName);
+  assert.ok(row, 'El panel no listó el archivo descargado.');
+
+  pass(
+    `descarga real de «${downloadFixture.fileName}» (${downloadFixture.body.length} B) escrita en la carpeta temporal y listada como completada en el panel.`,
+  );
+
   // El override de respaldo deja la ventana con su tamaño real, pero sigue siendo
   // una emulación: se intenta quitar al final para no cerrar con ella puesta.
   await cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined);
@@ -1345,4 +1493,14 @@ try {
   // El paso del E2E en CI lee esta línea para comparar con el total esperado.
   console.log(LOG + ' STEPS: ' + stepsRun + '/' + TOTAL_STEPS);
   await app?.cleanup();
+  downloadFixture?.server?.close();
+  try {
+    fs.rmSync(DOWNLOAD_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+  } catch (error) {
+    console.warn(
+      `No se pudo borrar la carpeta de descargas ${DOWNLOAD_DIR}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
