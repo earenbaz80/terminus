@@ -35,7 +35,7 @@ Crear una Pull Request desde una rama cuyo historial ha sido reescrito (p. ej., 
 
 ### Verificación post-push
 
-- `git log origin/main --format='%an <%ae>' | sort | uniq -c | sort -rn` → debe mostrar solo `Edel Arencibia Baez <edelarencibiabaez@gmail.com>` + dependabot.
+- `git log origin/main --format='%an <%ae> | %cn <%ce>' | sort | uniq -c | sort -rn` → solo tres formas: autor `Edel Arencibia Baez <edelarencibiabaez@gmail.com>` con committer idéntico, la misma autora con committer `GitHub <noreply@github.com>` en los merges hechos desde la web, y las de dependabot. Ninguna línea con otra firma: el rewrite también reescribió `%cn`/`%ce`, así que filtrar solo por `%an`/`%ae` dejaría pasar un committer viejo.
 - `git log --all --format="%b" | grep -c "Codebuff"` → **0**.
 - `npm test` y `npm run lint` deben pasar (280 commits reescritos, suite completa en verde, typescript + eslint limpios).
 - `git status` → clean.
