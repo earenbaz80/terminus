@@ -162,6 +162,7 @@ const COMMON_COMMANDS = [
   'scrape ',
   'reader',
   'indexar ',
+  'indexar vaciar',
   'buscar local ',
   'resumir',
   'resumen',
