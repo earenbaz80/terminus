@@ -82,6 +82,9 @@ const FIND_BAR_EXPRESSION = `(() => {
     selStart: input?.selectionStart ?? null,
     selEnd: input?.selectionEnd ?? null,
     status: status?.textContent?.trim() ?? '',
+    // data-find-blocked="mode" lo pone la app cuando el modo activo no deja buscar
+    // dentro de la página: el E2E se ancla a eso, no al texto traducido del aviso.
+    blocked: status?.getAttribute('data-find-blocked') ?? null,
     focused: document.activeElement === input,
     documentFocused: document.hasFocus(),
     frameMode,
@@ -817,6 +820,71 @@ async function main() {
   );
 
   await navigateToPage(cdp, EXTERNAL_URL, 'example.com');
+
+  // La app abre la página externa en modo NATIVO (`<webview>`) cuando el motor nativo
+  // está disponible. Esa rama se cubre antes de forzar REAL: la página tiene que vivir
+  // en el invitado y el buscador no puede entrar en él, así que tiene que avisarlo.
+  const nativePicked = await cdp.evaluate(`(() => {
+    const button = document.querySelector('[data-e2e="view-mode-native"]');
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert.equal(nativePicked, true, 'No se encontró el conmutador del modo NATIVO.');
+
+  const nativePage = await waitForExpression(
+    cdp,
+    `(() => {
+      const guest = document.querySelector('webview');
+      const rect = guest?.getBoundingClientRect();
+      return {
+        webview:
+          guest?.getAttribute('src') ??
+          (typeof guest?.getURL === 'function' ? guest.getURL() : null),
+        iframe: Boolean(document.querySelector('iframe')),
+        rect: rect ? { width: rect.width, height: rect.height } : null,
+      };
+    })()`,
+    (state) =>
+      Boolean(
+        state.webview?.includes('example.com') &&
+          !state.iframe &&
+          state.rect &&
+          state.rect.width > 100 &&
+          state.rect.height > 100,
+      ),
+    'la página dentro del <webview> del modo NATIVO',
+    20000,
+  );
+
+  const nativeFindOpened = await cdp.evaluate(`(() => {
+    const toggle = document.querySelector('${FIND_TOGGLE}');
+    if (!toggle) return false;
+    toggle.click();
+    return true;
+  })()`);
+  assert.equal(
+    nativeFindOpened,
+    true,
+    `No se encontró el conmutador del buscador (${FIND_TOGGLE}) en modo NATIVO.`,
+  );
+  assert.equal(await waitFindOpen(cdp, 5000), true, 'El buscador no se abrió en modo NATIVO.');
+
+  await setFindQuery(cdp, 'Example');
+  const changeMode = await waitForExpression(
+    cdp,
+    FIND_BAR_EXPRESSION,
+    (state) => state.blocked === 'mode',
+    'el buscador marcado como bloqueado por el modo',
+    10000,
+  );
+  assert.equal(changeMode.frameMode, null, 'El modo NATIVO no debe tener un iframe proxied.');
+  assert.notEqual(changeMode.status, '', 'El buscador no explicó por qué no busca.');
+  await closeFindBar(cdp);
+
+  pass(
+    `modo NATIVO: la página vive en el <webview> (${nativePage.webview}) y el buscador pide cambiar de modo («${changeMode.status}»).`,
+  );
 
   // La vista REAL usa un iframe directo (sin `?mode`), así que no pasa por searchInView:
   // aquí solo se comprueba que el conmutador existe y deja la página cross-origin.
