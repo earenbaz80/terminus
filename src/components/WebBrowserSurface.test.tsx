@@ -127,6 +127,48 @@ describe('WebBrowserSurface', () => {
     }
   });
 
+  // El modo NATIVO no tiene iframe proxied al que mandar la búsqueda: sin esto el
+  // buscador se quedaba mudo al escribir, porque `usesProxy` es true en ese modo y el
+  // postMessage se perdía en un `iframeRef` nulo. Lo cubre también el paso 1 de
+  // `scripts/e2e-installed-ctrl-f.mjs`, que solo corre con la app instalada.
+  it('avisa del cambio de modo al buscar dentro del webview nativo', async () => {
+    window.terminusNative = { available: true };
+    const storageKey = 'termbrowser.page-mode';
+    const savedMode = localStorage.getItem(storageKey);
+    localStorage.setItem(storageKey, 'native');
+
+    try {
+      renderSurface(pageTab);
+      await waitFor(() => expect(document.querySelector('webview')).toBeTruthy());
+
+      const toggle = document.querySelector('button[aria-keyshortcuts="Control+F"]');
+      expect(toggle).not.toBeNull();
+      fireEvent.click(toggle!);
+
+      const bar = document.querySelector('[data-e2e="find-bar"]');
+      expect(bar).not.toBeNull();
+      const status = bar!.querySelector('[data-e2e="find-status"]')!;
+      expect(status.textContent).toBe('');
+
+      fireEvent.change(bar!.querySelector('[data-e2e="find-input"]')!, {
+        target: { value: 'Example' },
+      });
+
+      await waitFor(() =>
+        expect(status.textContent).toBe(
+          'Cambia a OSCURO o TEXTO para buscar dentro de esta página.',
+        ),
+      );
+      // La página sigue en el invitado nativo: no aparece un iframe al buscar.
+      expect(document.querySelector('iframe')).toBeNull();
+      expect(document.querySelector('webview')).not.toBeNull();
+    } finally {
+      if (savedMode === null) localStorage.removeItem(storageKey);
+      else localStorage.setItem(storageKey, savedMode);
+      delete window.terminusNative;
+    }
+  });
+
   it('recreates the native page per tab and returns to the frame in other modes', async () => {
     window.terminusNative = { available: true };
 
