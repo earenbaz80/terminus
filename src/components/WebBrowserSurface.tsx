@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Bookmark, BrowserTab, PageMode, TerminalLogEntry, ThemeConfig } from '../types';
+import { Bookmark, BrowserTab, DownloadEntry, PageMode, TerminalLogEntry, ThemeConfig } from '../types';
 import { soundEffects } from '../utils/soundEffects';
 import { BOOT_ASCII } from '../utils/bootBanner';
 import { getLatencyGlow } from '../utils/latencyGlow';
@@ -17,6 +17,7 @@ import {
   Bookmark as BookmarkIcon,
   ChevronDown,
   ChevronUp,
+  CircleArrowDown,
   Clock3,
   Download,
   Globe2,
@@ -36,6 +37,7 @@ import { getTerminusSearchQuery, isTerminusSearchUrl } from '../utils/terminusSe
 import { isPrivateTargetUrl } from '../utils/networkPolicy';
 import { loadRecentSearches, recordRecentSearch } from '../utils/recentSearches';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
+import { DownloadsPanel } from './DownloadsPanel';
 import { useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/messages';
 import { SignalLostScene } from './SignalLostScene';
@@ -315,6 +317,9 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   // se marca en el DOM para que el E2E lo compruebe sin leer texto traducido.
   const [findBlocked, setFindBlocked] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Descargas de la sesión: las publica el proceso principal y aquí solo se pintan.
+  const [downloads, setDownloads] = useState<DownloadEntry[]>([]);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [localZoom, setLocalZoom] = useState(1);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const nativeContainerRef = useRef<HTMLDivElement>(null);
@@ -717,6 +722,30 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   useEffect(() => {
     if (startPageVisible) startInputRef.current?.focus();
   }, [startPageVisible]);
+
+  // La lista de descargas la manda el proceso principal: el renderer no ve
+  // `will-download`, así que escucha el aviso y pide el estado inicial al montar.
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? window.terminusDesktop : undefined;
+    if (!bridge?.onDownloadsUpdate) return undefined;
+
+    let alive = true;
+    void bridge
+      .listDownloads?.()
+      .then((items) => {
+        if (alive && Array.isArray(items)) setDownloads(items);
+      })
+      .catch(() => undefined);
+
+    const unsubscribe = bridge.onDownloadsUpdate((update) => {
+      if (Array.isArray(update?.downloads)) setDownloads(update.downloads);
+    });
+
+    return () => {
+      alive = false;
+      unsubscribe?.();
+    };
+  }, []);
   const currentUrl = hasPage && tab ? tab.url : '';
   const savedBookmark = bookmarks.find((bm) => sameUrl(bm.url, currentUrl));
   const proxied = (view: PageMode) => `/api/view?url=${encodeURIComponent(tab?.url ?? '')}&mode=${view}`;
@@ -1588,6 +1617,47 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
             >
               <Download className="w-3.5 h-3.5" />
             </a>
+          )}
+          {typeof window !== 'undefined' && window.terminusDesktop?.onDownloadsUpdate && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEffects.playKeyClick();
+                  setDownloadsOpen((open) => !open);
+                }}
+                className="border-l p-1.5 cursor-pointer transition-colors hover:bg-white/10"
+                style={{ borderColor: theme.border, color: downloadsOpen ? theme.accent : theme.text }}
+                title={t('downloads.title')}
+                aria-label={t('downloads.open')}
+                aria-expanded={downloadsOpen}
+                data-e2e="downloads-toggle"
+              >
+                <CircleArrowDown className="w-3.5 h-3.5" />
+                {downloads.length > 0 && (
+                  <span
+                    className="absolute -top-0.5 -right-0.5 min-w-3 px-0.5 text-center text-[8px] leading-3"
+                    style={{ backgroundColor: theme.accent, color: theme.cardBg }}
+                    data-e2e="downloads-count"
+                  >
+                    {downloads.length}
+                  </span>
+                )}
+              </button>
+              {downloadsOpen && (
+                <DownloadsPanel
+                  theme={theme}
+                  downloads={downloads}
+                  onCancel={(id) => {
+                    void window.terminusDesktop?.cancelDownload?.(id);
+                  }}
+                  onShow={(id) => {
+                    void window.terminusDesktop?.showDownload?.(id);
+                  }}
+                  onClose={() => setDownloadsOpen(false)}
+                />
+              )}
+            </div>
           )}
           <button
             type="button"

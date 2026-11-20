@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const MAXIMIZED_CHANGED_CHANNEL = 'terminus:window:maximized-changed';
 const FRAME_CONTEXT_MENU_CHANNEL = 'terminus:context-menu:frame';
 const FIND_SHORTCUT_CHANNEL = 'terminus:find:shortcut';
+const DOWNLOADS_CHANNEL = 'terminus:downloads:update';
 const OPEN_TAB_CHANNEL = 'terminus:browser:open-tab';
 const PTY_DATA_CHANNEL = 'terminus:pty:data';
 const PTY_EXIT_CHANNEL = 'terminus:pty:exit';
@@ -70,6 +71,10 @@ contextBridge.exposeInMainWorld('terminusDesktop', {
       ipcRenderer.removeListener(OPEN_TAB_CHANNEL, listener);
     };
   },
+  listDownloads: () => ipcRenderer.invoke('terminus:downloads:list'),
+  cancelDownload: (id) => ipcRenderer.invoke('terminus:downloads:cancel', id),
+  showDownload: (id) => ipcRenderer.invoke('terminus:downloads:show', id),
+  onDownloadsUpdate: (callback) => subscribe(DOWNLOADS_CHANNEL, callback),
   getAdblockCosmetics: (url) => ipcRenderer.invoke('terminus:adblock:cosmetics', url),
   getAdblockState: () => ipcRenderer.invoke('terminus:adblock:state'),
   setAdblockEnabled: (enabled) => ipcRenderer.invoke('terminus:adblock:set-enabled', enabled),
