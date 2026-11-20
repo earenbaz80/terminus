@@ -84,7 +84,11 @@ describe('indexar', () => {
 
   it('vacía el índice con DELETE cuando se pide "indexar vaciar"', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
-      jsonResponse({ ok: true, index: { documents: 0, hosts: [], terms: 0 } })
+      jsonResponse({
+        ok: true,
+        removed: { documents: 12, terms: 340 },
+        index: { documents: 0, hosts: [], terms: 0 },
+      })
     );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -96,6 +100,8 @@ describe('indexar', () => {
     expect(init?.method).toBe('DELETE');
     expect(log.type).toBe('system');
     expect(log.output).toContain('vaciado');
+    expect(log.output).toContain('12 documentos');
+    expect(log.output).toContain('340 términos');
   });
 
   it('informa del error del servidor sin romper la terminal', async () => {

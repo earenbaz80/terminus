@@ -53,7 +53,7 @@ export const CONSOLE_ES = {
     '=== BÚSQUEDA LOCAL: "{query}" ({count} resultados en {documents} documentos) ===',
   'out.indexSearchEmpty':
     'Sin resultados para "{query}" en el índice local ({documents} documentos). Indexe páginas con: indexar <url>',
-  'out.indexCleared': '[✓] Índice local vaciado. Puede volver a llenarlo con: indexar <url>',
+  'out.indexCleared': '[✓] Índice local vaciado: {documents} documentos y {terms} términos eliminados.\nPuede volver a llenarlo con: indexar <url>',
   'out.noActiveTab': 'No hay ninguna pestaña activa disponible.',
   'out.pageSummary': 'HTTP {status} {statusText} · {kb} KB · Cifrado AES-256',
   'out.pageLoaded':
@@ -276,7 +276,7 @@ export const CONSOLE_DE: Record<ConsoleKey, string> = {
     '=== LOKALE SUCHE: "{query}" ({count} Treffer in {documents} Dokumenten) ===',
   'out.indexSearchEmpty':
     'Keine Treffer für "{query}" im lokalen Index ({documents} Dokumente). Seiten indexieren mit: indexar <url>',
-  'out.indexCleared': '[✓] Lokaler Index geleert. Neu befüllen mit: indexar <url>',
+  'out.indexCleared': '[✓] Lokaler Index geleert: {documents} Dokumente und {terms} Begriffe gelöscht.\nNeu befüllen mit: indexar <url>',
   'out.noActiveTab': 'Kein aktiver Tab verfügbar.',
   'out.pageSummary': 'HTTP {status} {statusText} · {kb} KB · AES-256-Verschlüsselung',
   'out.pageLoaded':
@@ -497,7 +497,7 @@ export const CONSOLE_FR: Record<ConsoleKey, string> = {
     '=== RECHERCHE LOCALE : « {query} » ({count} résultats dans {documents} documents) ===',
   'out.indexSearchEmpty':
     'Aucun résultat pour « {query} » dans l’index local ({documents} documents). Indexez des pages avec : indexar <url>',
-  'out.indexCleared': '[✓] Index local vidé. Pour le remplir à nouveau : indexar <url>',
+  'out.indexCleared': '[✓] Index local vidé : {documents} documents et {terms} termes supprimés.\nPour le remplir à nouveau : indexar <url>',
   'out.noActiveTab': 'Aucun onglet actif disponible.',
   'out.pageSummary': 'HTTP {status} {statusText} · {kb} KB · Chiffrement AES-256',
   'out.pageLoaded':
@@ -718,7 +718,7 @@ export const CONSOLE_IT: Record<ConsoleKey, string> = {
     '=== RICERCA LOCALE: "{query}" ({count} risultati in {documents} documenti) ===',
   'out.indexSearchEmpty':
     'Nessun risultato per "{query}" nell’indice locale ({documents} documenti). Indicizza pagine con: indexar <url>',
-  'out.indexCleared': '[✓] Indice locale svuotato. Per riempirlo di nuovo: indexar <url>',
+  'out.indexCleared': '[✓] Indice locale svuotato: {documents} documenti e {terms} termini eliminati.\nPer riempirlo di nuovo: indexar <url>',
   'out.noActiveTab': 'Nessuna scheda attiva disponibile.',
   'out.pageSummary': 'HTTP {status} {statusText} · {kb} KB · Cifratura AES-256',
   'out.pageLoaded':
@@ -938,7 +938,7 @@ export const CONSOLE_EN: Record<ConsoleKey, string> = {
     '=== LOCAL SEARCH: "{query}" ({count} results in {documents} documents) ===',
   'out.indexSearchEmpty':
     'No results for "{query}" in the local index ({documents} documents). Index pages with: indexar <url>',
-  'out.indexCleared': '[✓] Local index cleared. Refill it with: indexar <url>',
+  'out.indexCleared': '[✓] Local index cleared: {documents} documents and {terms} terms removed.\nRefill it with: indexar <url>',
   'out.noActiveTab': 'No active tab available.',
   'out.pageSummary': 'HTTP {status} {statusText} · {kb} KB · AES-256 encryption',
   'out.pageLoaded':
