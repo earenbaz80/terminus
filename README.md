@@ -8,6 +8,7 @@ El estado del proyecto, los pendientes y las decisiones cerradas están en [ROAD
 
 - **Dos superficies**: navegador web real y terminal interactiva, con pestañas independientes.
 - **Pestañas de verdad**: un enlace con `target=_blank` o `window.open` abre una pestaña nueva de Terminus, activa, en vez de recargar la página actual; los esquemas que no son web y los enlaces que bloquea el adblock no ganan pestaña.
+- **Permisos por sitio**: cámara y micrófono, ubicación, notificaciones y portapapeles se preguntan una vez por origen con un diálogo nativo y la respuesta se recuerda en `permissions.json`; el resto se niega sin molestar.
 - **Cabecera única**: pestañas, herramientas, controles de ventana y menú de configuración (audio, temas, B&W, CRT y red) en una sola barra.
 - **Navegador**: barra de direcciones con sugerencias de marcadores e historial global, historial por pestaña, favoritos, indicador HTTPS/HTTP y descarga de la página.
 - **Búsqueda web desde el inicio**: el campo de la pantalla de inicio busca directamente, sin abrir otra pantalla antes; las sugerencias son clicables y los resultados aparecen en Terminus Search.
