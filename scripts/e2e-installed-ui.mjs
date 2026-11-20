@@ -70,11 +70,17 @@ const e2eLocale = (process.env.TERMINUS_E2E_LOCALE ?? '').trim();
 const START_FORM = 'form[role="search"]';
 // Ancla propia del campo de búsqueda del inicio: no depende de su posición ni del idioma.
 const START_INPUT = 'input[data-e2e="start-search-input"]';
+// El `<header>` lleva su propio formulario de búsqueda, así que en el DOM conviven dos
+// `form[role="search"]`: el de la cabecera y el de la pantalla (inicio o resultados).
+// `PAGE_SEARCH_FORMS` deja solo los de la pantalla y `START_FORM_SCOPED` ancla el del
+// inicio por su campo, sin depender de cuál aparezca primero en el documento.
+const PAGE_SEARCH_FORMS = `[...document.querySelectorAll(${JSON.stringify(START_FORM)})].filter((form) => !form.closest('header'))`;
+const START_FORM_SCOPED = `${START_FORM}:has(${START_INPUT})`;
 // Cajas donde se escribe durante la corrida; `where` de una tecla ajena dice en cuál cayó.
 const STRAY_FIELDS = [
   ['inicio', START_INPUT],
   ['barra', ADDRESS_SELECTOR],
-  ['resultados', `${START_FORM} input[type="search"]`],
+  ['resultados', `${START_FORM}:not(header ${START_FORM}) input[type="search"]`],
 ];
 // Ancla de las chips recientes: distingue una búsqueda recordada de una sugerencia fija.
 const RECENT_CHIP = '[data-e2e="recent-search"]';
@@ -306,7 +312,7 @@ const IN_FLIGHT_QUERY = 'javascript';
  * existe, así que `busy` sale nulo.
  */
 const RESULTS_STATE_EXPRESSION = `(() => {
-  const form = document.querySelector(${JSON.stringify(START_FORM)});
+  const form = (${PAGE_SEARCH_FORMS})[0] ?? null;
   const input = form?.querySelector('input[type="search"]') ?? null;
   const busy = form?.closest('section[aria-busy]')?.getAttribute('aria-busy') ?? null;
   return {
@@ -609,10 +615,11 @@ async function main() {
   const startPage = await waitForExpression(
     cdp,
     `(() => {
-      const form = document.querySelector(${JSON.stringify(START_FORM)});
+      const forms = ${PAGE_SEARCH_FORMS};
+      const form = forms.find((item) => item.querySelector(${JSON.stringify(START_INPUT)})) ?? null;
       const input = form?.querySelector(${JSON.stringify(START_INPUT)}) ?? null;
       return {
-        forms: document.querySelectorAll(${JSON.stringify(START_FORM)}).length,
+        forms: forms.length,
         hasInput: Boolean(input),
         iframe: Boolean(document.querySelector('iframe')),
         formButtons: form ? form.querySelectorAll('button').length : 0,
@@ -644,7 +651,7 @@ async function main() {
   })()`);
 
   const typed = await cdp.evaluate(`(() => {
-    const form = document.querySelector(${JSON.stringify(START_FORM)});
+    const form = document.querySelector(${JSON.stringify(START_FORM_SCOPED)});
     const input = form?.querySelector(${JSON.stringify(START_INPUT)});
     if (!input) return false;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -660,7 +667,7 @@ async function main() {
   await waitForExpression(
     cdp,
     `(() => {
-      const form = document.querySelector(${JSON.stringify(START_FORM)});
+      const form = document.querySelector(${JSON.stringify(START_FORM_SCOPED)});
       const input = form?.querySelector(${JSON.stringify(START_INPUT)});
       const submit = form?.querySelector('button[type="submit"]');
       return { value: input?.value ?? null, enabled: Boolean(submit) && !submit.disabled };
@@ -674,15 +681,17 @@ async function main() {
   const searched = await waitForExpression(
     cdp,
     `(() => {
-      // Ya en los resultados, la única form[role="search"] es la de esa página.
-      const form = document.querySelector(${JSON.stringify(START_FORM)});
+      // Ya en los resultados, el formulario de la pantalla es el de TerminusSearchPage;
+      // el de la cabecera sigue en el DOM y se descarta.
+      const forms = ${PAGE_SEARCH_FORMS};
+      const form = forms[0] ?? null;
       const input = form?.querySelector('input[type="search"]') ?? null;
       let history = [];
       try {
         history = JSON.parse(localStorage.getItem(${JSON.stringify(HISTORY_KEY)}) ?? '[]');
       } catch {}
       return {
-        forms: document.querySelectorAll(${JSON.stringify(START_FORM)}).length,
+        forms: forms.length,
         inputValue: input?.value ?? null,
         address: document.querySelector(${JSON.stringify(ADDRESS_SELECTOR)})?.value ?? null,
         commandLogged: Array.isArray(history) && history.includes('search ' + ${JSON.stringify(SEARCH_QUERY)}),
@@ -709,7 +718,7 @@ async function main() {
   const recent = await waitForExpression(
     cdp,
     `(() => {
-      const form = document.querySelector(${JSON.stringify(START_FORM)});
+      const form = document.querySelector(${JSON.stringify(START_FORM_SCOPED)});
       const chips = [...document.querySelectorAll(${JSON.stringify(RECENT_CHIP)})];
       const input = form?.querySelector(${JSON.stringify(START_INPUT)}) ?? null;
       return {
@@ -1216,7 +1225,7 @@ async function main() {
       await waitForExpression(
         cdp,
         `(() => {
-          const form = document.querySelector(${JSON.stringify(START_FORM)});
+          const form = document.querySelector(${JSON.stringify(START_FORM_SCOPED)});
           const input = form?.querySelector(${JSON.stringify(START_INPUT)});
           const submit = form?.querySelector('button[type="submit"]');
           return { value: input?.value ?? null, enabled: Boolean(submit) && !submit.disabled };
@@ -1226,7 +1235,7 @@ async function main() {
         5000,
       );
       const submitted = await cdp.evaluate(`(() => {
-        const form = document.querySelector(${JSON.stringify(START_FORM)});
+        const form = document.querySelector(${JSON.stringify(START_FORM_SCOPED)});
         const submit = form?.querySelector('button[type="submit"]');
         if (!submit || submit.disabled) return false;
         submit.click();

@@ -64,9 +64,10 @@ const FIND_DIALOG_EXPRESSION = `document.querySelector('[data-e2e="find-bar"]')
       .find((item) => item.querySelector('[aria-live="polite"]'))`;
 const FIND_INPUT_SELECTOR = '[data-e2e="find-input"], input';
 const FIND_STATUS_SELECTOR = '[data-e2e="find-status"], [aria-live="polite"]';
-// Conmutadores de vista: `data-e2e="view-mode-<id>"`; el respaldo son los únicos
-// `aria-pressed` fuera de un diálogo, en el orden en que PAGE_MODES los pinta.
-const MODE_INDEX = { real: 0, dark: 1, text: 2 };
+// Conmutadores de vista: `data-e2e="view-mode-<id>"`; sin ese atributo (builds
+// antiguos) se usan los `aria-pressed` fuera de un diálogo. REAL va siempre primero
+// en PAGE_MODES, exponga la app tres modos o cuatro (con NATIVO).
+const REAL_MODE_INDEX = 0;
 // La consulta, el estado y el modo del iframe salen de una sola lectura.
 const FIND_BAR_EXPRESSION = `(() => {
   const dialog = ${FIND_DIALOG_EXPRESSION};
@@ -166,18 +167,26 @@ async function selectProxiedView(client, mode, expectedText) {
       exact.click();
       return { clicked: true, exact: true };
     }
+    // Sin data-e2e (build antiguo): el orden depende de si la app expone el modo
+    // NATIVO, así que el índice se resuelve con el número de conmutadores presentes.
+    const ORDERS = {
+      3: { real: 0, dark: 1, text: 2 },
+      4: { real: 0, native: 1, dark: 2, text: 3 },
+    };
     const buttons = [...document.querySelectorAll('button[aria-pressed]')]
       .filter((button) => !button.closest('[role="dialog"]'));
-    const button = buttons[${MODE_INDEX[mode]}];
+    const order = ORDERS[buttons.length];
+    const index = order ? order[${JSON.stringify(mode)}] : -1;
+    const button = index >= 0 ? buttons[index] : null;
     if (!button) return { clicked: false, exact: false, count: buttons.length };
     button.click();
     return { clicked: true, exact: false, count: buttons.length };
   })()`);
-  assert.equal(clicked.clicked, true, `No se encontró el conmutador de la vista ${mode}.`);
-  // La 0.3.0 instalada no lleva data-e2e: solo entonces se depende del orden.
-  if (!clicked.exact) {
-    assert.equal(clicked.count, 3, `Se esperaban 3 conmutadores de vista y hay ${clicked.count}.`);
-  }
+  assert.equal(
+    clicked.clicked,
+    true,
+    `No se encontró el conmutador de la vista ${mode} (${clicked.count} conmutadores sin data-e2e).`,
+  );
 
   // Una sola espera: el iframe cambia de modo y el proxy sirve el fixture con su texto.
   const state = await waitForExpression(
@@ -239,11 +248,24 @@ async function navigateToPage(client, url, expectedFramePart) {
     nativeVirtualKeyCode: 13,
   });
   await clearSyntheticKeys(client);
+  // La app abre la página externa en modo NATIVO cuando el motor nativo está
+  // disponible, así que la superficie puede ser un `<webview>` y no un iframe: se
+  // espera a la que exista con la URL pedida, sin atarse a una etiqueta concreta.
   await waitForExpression(
     client,
-    `document.querySelector('iframe')?.src ?? null`,
-    (src) => Boolean(src && src.includes(expectedFramePart)),
-    `el iframe ${expectedFramePart}`,
+    `(() => {
+      const frame = document.querySelector('iframe');
+      const guest = document.querySelector('webview');
+      return {
+        iframe: frame?.src ?? null,
+        webview:
+          guest?.getAttribute('src') ??
+          (typeof guest?.getURL === 'function' ? guest.getURL() : null),
+      };
+    })()`,
+    (state) =>
+      [state.iframe, state.webview].some((src) => Boolean(src && src.includes(expectedFramePart))),
+    `la página ${expectedFramePart}`,
     20000,
   );
 }
@@ -801,7 +823,7 @@ async function main() {
   const realClicked = await cdp.evaluate(`(() => {
     const button = document.querySelector('[data-e2e="view-mode-real"]')
       ?? [...document.querySelectorAll('button[aria-pressed]')]
-        .filter((item) => !item.closest('[role="dialog"]'))[${MODE_INDEX.real}];
+        .filter((item) => !item.closest('[role="dialog"]'))[${REAL_MODE_INDEX}];
     if (!button) return false;
     button.click();
     return true;
