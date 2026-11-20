@@ -961,12 +961,11 @@ async function startServer() {
   // Vaciar el índice es destructivo, así que pide un DELETE explícito.
   app.delete('/api/index', async (_req, res) => {
     await searchIndex.load();
-    const removed = searchIndex.status();
+    const before = searchIndex.status();
     await searchIndex.clear();
     return res.json({
       ok: true,
-      removed: { documents: removed.documents, terms: removed.terms },
-      index: searchIndex.status(),
+      removed: { documents: before.documents, terms: before.terms },
     });
   });
 

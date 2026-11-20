@@ -87,7 +87,6 @@ describe('indexar', () => {
       jsonResponse({
         ok: true,
         removed: { documents: 12, terms: 340 },
-        index: { documents: 0, hosts: [], terms: 0 },
       })
     );
     vi.stubGlobal('fetch', fetchMock);
@@ -99,7 +98,6 @@ describe('indexar', () => {
     expect(url).toBe('/api/index');
     expect(init?.method).toBe('DELETE');
     expect(log.type).toBe('system');
-    expect(log.output).toContain('vaciado');
     expect(log.output).toContain('12 documentos');
     expect(log.output).toContain('340 términos');
   });

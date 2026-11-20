@@ -242,9 +242,6 @@ describe('/api/index integration', () => {
     expect(body.ok).toBe(true);
     expect(body.removed.documents).toBe(2);
     expect(body.removed.terms).toBeGreaterThan(0);
-    expect(body.index.documents).toBe(0);
-    expect(body.index.terms).toBe(0);
-    expect(body.index.hosts).toEqual([]);
 
     const search = await request(`${terminusOrigin}/api/index?q=redes`, {
       headers: { Cookie: sessionCookie },

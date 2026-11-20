@@ -2423,8 +2423,8 @@ async function performIndexClear(ctx: CommandContext): Promise<TerminalLogEntry>
       timestamp,
       type: 'system',
       output: ctx.tc('out.indexCleared', {
-        documents: data.removed?.documents ?? 0,
-        terms: data.removed?.terms ?? 0,
+        documents: data.removed.documents,
+        terms: data.removed.terms,
       }),
     };
   } catch (error: any) {

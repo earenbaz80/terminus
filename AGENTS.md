@@ -13,7 +13,15 @@ Crear una Pull Request desde una rama cuyo historial ha sido reescrito (p. ej., 
 
 ### Procedimiento usado para publicar el historial rewriteado en `main`
 
-1. **Levantar temporalmente la protección de `main`** a mano en la web del repositorio (**Settings → Rules → ruleset de `main`**, o **Settings → Branches** si sigue la configuración clásica): no hay herramienta de agente que la cambie, y la API REST equivalente (`PUT /repos/{owner}/{repo}/branches/main/protection`) exige un token de administración que no vive en el repo.
+0. **Verificar acceso SSH a GitHub** antes de intentar cualquier push:
+   ```bash
+   ssh -T git@github.com
+   ```
+   - Si la primera vez, agregá la clave `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILjRaU6djuvO+dAxjoh/TKUjFDTJlgaUGeduzb9cjrCd edelarencibiabaez@gmail.com` (o el handle correspondiente) en https://github.com/settings/ssh/new (Title: `Terminus G4minPc3d3L`).
+   - Si ya está registrada, asegurarse de que la fingerprint coincida y que no haya frase de paso que bloquee la agente.
+   - Solo después de confirmar `Welcome to GitHub, edelarencibiabaez!` (o el usuario correspondiente), proceder con el paso 1.
+
+1. **Levantar temporalmente la protección de `main`** a mano en la web del repositorio",  (**Settings → Rules → ruleset de `main`**, o **Settings → Branches** si sigue la configuración clásica): no hay herramienta de agente que la cambie, y la API REST equivalente (`PUT /repos/{owner}/{repo}/branches/main/protection`) exige un token de administración que no vive en el repo.
    - `allow_force_pushes: true`
    - Quitar la exigencia de PR (`required_pull_request_reviews`) y el check obligatorio `Windows - lint, tests, cobertura y E2E opcional` durante este paso: son los dos únicos que bloquean un push directo.
    - Mantener `required_status_checks.strict: true`, `enforce_admins: true` y `allow_deletions: false` intactos; el `strict` se configura aquí y solo vuelve a exigirse cuando el paso 3 devuelve la PR y el check.

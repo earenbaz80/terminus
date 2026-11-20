@@ -58,16 +58,16 @@ Para probar la vista WEB dentro del propio terminal, pon `allowInlineFrames={tru
 
 ## Índice local de búsqueda
 
-La consola puede guardar páginas en un índice BM25 propio y consultarlas después. El índice vive en el servidor porque escribe en disco, y persiste entre reinicios y actualizaciones: no consulta ningún buscador externo.
+La consola puede guardar páginas en un índice BM25 propio y consultarlas después. El índice vive en el servidor porque escribe en disco y persiste entre reinicios: no consulta ningún buscador externo.
 
 | Comando | Qué hace |
 | --- | --- |
-| `indexar <url>` | Recorre hasta 20 páginas del mismo host desde esa URL y guarda título, texto y enlaces. |
+| `indexar <url>` | Recorre hasta 20 páginas del mismo host y guarda título, texto y enlaces. |
 | `indexar` | Muestra documentos, hosts, términos y la carpeta del índice. |
-| `indexar vaciar` | Borra todos los documentos y términos. Es destructivo y lo informa con el recuento eliminado. |
-| `buscar local <consulta>` | Consulta el índice y devuelve hasta 10 resultados con título, URL y fragmento. |
+| `indexar vaciar` | Borra todo el índice. El aviso incluye cuántos documentos y términos se eliminaron. |
+| `buscar local <consulta>` | Devuelve hasta 10 resultados con título, URL y fragmento. No sale a la red y no sustituye a `search`. |
 
-`indexar` reutiliza la descarga segura de `/api/view` (`fetchRemote`): valida cada salto y fija la IP resuelta, así que la política de red vale igual aquí y un destino privado se rechaza salvo que se habilite `TERMINUS_ALLOW_PRIVATE=1`. El crawler se queda en el host de la semilla, descarta binarios y esquemas no web, y espera 150 ms entre páginas. Las páginas con menos de 80 caracteres de texto no entran en el índice y se cuentan como omitidas.
+`indexar` reutiliza la descarga segura de /api/view (`fetchRemote`): valida cada salto y fija la IP resuelta, así que la política de red vale igual que en la vista normal y un destino privado se rechaza salvo que se habilite `TERMINUS_ALLOW_PRIVATE=1`. El crawler se queda en el host de la semilla, descarta binarios y esquemas no web, y espera 150 ms entre páginas. Las páginas con menos de 80 caracteres de texto no entran en el índice y se cuentan como omitidas.
 
 `buscar local` no sale a la red y no sustituye a `search`, que sigue buscando en la web. Sin coincidencias, el aviso indica cuántos documentos hay y recuerda cómo indexar.
 
