@@ -2,7 +2,7 @@
 
 ## ⚠️ PR entre historiales reescritos sin ancestro común
 
-Crear una Pull Request desde una rama cuyo historial ha sido reescrito (p. ej., mediante `git filter-repo` o `git filter-branch`) hacia `main` es **impossible** en GitHub.
+Crear una Pull Request desde una rama cuyo historial ha sido reescrito (p. ej., mediante `git filter-repo` o `git filter-branch`) hacia `main` es **imposible** en GitHub.
 
 ### Por qué falla
 
@@ -13,31 +13,39 @@ Crear una Pull Request desde una rama cuyo historial ha sido reescrito (p. ej., 
 
 ### Procedimiento usado para publicar el historial rewriteado en `main`
 
-1. **Levantar temporalmente la protección de `main`** en GitHub (usando `GITHUB_UPDATE_BRANCH_PROTECTION`):
-   - `allow_force_pushes: true`
-   - `required__status__checks__strict: true` (no se omite; los checks se validan en el push posterior o se levantan los checks de la rama antes del push).
-   - Mantener `enforce_admins: true` y `allow_deletions: false` intactos.
-   - Quitar la exigencia de PR (`required_pull_request_reviews.enabled: false`) y el check obligatorio `Windows - lint, tests, cobertura y E2E opcional` durante este paso.
-
-2. **Force push** del historial rewriteado:
+0. **Verificar acceso SSH a GitHub** antes de intentar cualquier push:
    ```bash
-   git push --force-with-lease origin main
+   ssh -T git@github.com
    ```
-   - Esto actualiza `main` al nuevo hash del historial rewriteado (todos los commits con firma `Edel Arencibia Baez <ereinbaz_80@proton.me>` y sin Codebuff).
+   - Si la primera vez, agregá la clave `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILjRaU6djuvO+dAxjoh/TKUjFDTJlgaUGeduzb9cjrCd edelarencibiabaez@gmail.com` (o el handle correspondiente) en https://github.com/settings/ssh/new (Title: `Terminus G4minPc3d3L`).
+   - Si ya está registrada, asegurarse de que la fingerprint coincida y que no haya frase de paso que bloquee la agente.
+   - Solo después de confirmar `Welcome to GitHub, edelarencibiabaez!` (o el usuario correspondiente), proceder con el paso 1.
+
+1. **Levantar temporalmente la protección de `main`** a mano en la web del repositorio",  (**Settings → Rules → ruleset de `main`**, o **Settings → Branches** si sigue la configuración clásica): no hay herramienta de agente que la cambie, y la API REST equivalente (`PUT /repos/{owner}/{repo}/branches/main/protection`) exige un token de administración que no vive en el repo.
+   - `allow_force_pushes: true`
+   - Quitar la exigencia de PR (`required_pull_request_reviews`) y el check obligatorio `Windows - lint, tests, cobertura y E2E opcional` durante este paso: son los dos únicos que bloquean un push directo.
+   - Mantener `required_status_checks.strict: true`, `enforce_admins: true` y `allow_deletions: false` intactos; el `strict` se configura aquí y solo vuelve a exigirse cuando el paso 3 devuelve la PR y el check.
+
+2. **Force push** del historial rewriteado, atado al commit que hoy tiene el remoto:
+   ```bash
+   git rev-parse origin/main   # debe imprimir fc6586e58b4c8ed714d3981743da4d86b4e6db52
+   git push --force-with-lease=main:fc6586e58b4c8ed714d3981743da4d86b4e6db52 origin main
+   ```
+   - Sin `=main:<ref-vieja>` el lease no comprueba nada útil: se limita al valor de `origin/main` del último fetch. Con el hash explícito, el push se rechaza si alguien movió `main` desde ese commit y toca revisar qué entró antes de reintentar.
+   - `fc6586e58b4c8ed714d3981743da4d86b4e6db52` es el `origin/main` observado al preparar el rewrite; si el `git rev-parse` de arriba imprime otro, sustituirlo en el push.
+   - Esto actualiza `main` al nuevo hash del historial rewriteado (todos los commits con firma `Edel Arencibia Baez <edelarencibiabaez@gmail.com>` y sin Codebuff).
 
 3. **Restaurar exactamente la protección original**:
    - `allow_force_pushes: false`
-   - `required_pull_request_reviews.enabled: true` (con `required_approving_review_count: 0` para este repositorio, pero la protección "Changes must be made through a pull request" está activa)
-   - `required__status__checks__strict: true`
-   - `enforce_admins: true`
-   - `allow_deletions: false`
-   - Verificar con `GITHUB_GET_BRANCH_PROTECTION` que la configuración coincide al 100% con la anterior.
+   - `required_pull_request_reviews` activo (con `required_approving_review_count: 0` para este repositorio, pero la protección "Changes must be made through a pull request" está activa), y el check `Windows - lint, tests, cobertura y E2E opcional` obligatorio otra vez.
+   - `required_status_checks.strict: true`, `enforce_admins: true` y `allow_deletions: false`.
+   - Verificar en la web que la tarjeta del ruleset coincide al 100% con la anterior; para automatizarlo, `GET /repos/{owner}/{repo}/branches/main/protection` desde un cliente con token de administración.
 
 ### Verificación post-push
 
-- `git log origin/main --format='%an <%ae>' | sort | uniq -c | sort -rn` → debe mostrar solo `Edel Arencibia Baez <ereinbaz_80@proton.me>` + dependabot.
+- `git log origin/main --format='%an <%ae> | %cn <%ce>' | sort | uniq -c | sort -rn` → solo tres formas: autor `Edel Arencibia Baez <edelarencibiabaez@gmail.com>` con committer idéntico, la misma autora con committer `GitHub <noreply@github.com>` en los merges hechos desde la web, y las de dependabot. Ninguna línea con otra firma: el rewrite también reescribió `%cn`/`%ce`, así que filtrar solo por `%an`/`%ae` dejaría pasar un committer viejo.
 - `git log --all --format="%b" | grep -c "Codebuff"` → **0**.
-- `npm test` y `npm run lint` deben pasar (283 commits reescritos, 344 pruebas pass, typescript + eslint limpios).
+- `npm test` y `npm run lint` deben pasar (280 commits reescritos, suite completa en verde, typescript + eslint limpios).
 - `git status` → clean.
 
 ### Evitar futuros errores
@@ -46,4 +54,4 @@ Crear una Pull Request desde una rama cuyo historial ha sido reescrito (p. ej., 
 - Nunca intentar crear PR entre ramas cuyo historial fue modificado con `filter-repo`/`filter-branch` sin primero rebasear/restablecer el ancestro común.
 
 ---
-*Documento después del rewrite de 283 commits para remover Codebuff attribution y actualizar email a `ereinbaz_80@proton.me`.*
+*Documento después del rewrite de 280 commits para remover Codebuff attribution y actualizar el email a `edelarencibiabaez@gmail.com`.*

@@ -414,7 +414,8 @@ ${ctx.tc('out.manualBody')}`.trim(),
     return processCommand('forward', ctx);
   }
 
-  if (primaryCmd === 'buscar') {
+  // `buscar local …` no es una búsqueda web: lo resuelve el índice más abajo.
+  if (primaryCmd === 'buscar' && (args[0] || '').toLowerCase() !== 'local') {
     return processCommand(`search ${args.join(' ')}`, ctx);
   }
 
@@ -702,6 +703,14 @@ ${ctx.tc('out.manualBody')}`.trim(),
       type: 'stdout',
       output: args.join(' '),
     };
+  }
+
+  // 3a. ÍNDICE LOCAL: indexar <url> y buscar local <consulta>
+  if (primaryCmd === 'indexar' || primaryCmd === 'index') {
+    return performIndexCommand(args, ctx);
+  }
+  if (primaryCmd === 'buscar' && (args[0] || '').toLowerCase() === 'local') {
+    return performIndexLocalSearch(args.slice(1).join(' '), ctx);
   }
 
   // 3. SEARCH / BUSCAR (REAL SEARCH ENGINE INTEGRATION)
@@ -2329,6 +2338,165 @@ Tiempos aproximados de ida y vuelta en milisegundos:
  */
 function isCurrentSearch(tab: BrowserTab, searchUrl: string, cleanQuery: string): boolean {
   return tab.url === searchUrl && tab.search?.query === cleanQuery;
+}
+
+/** `indexar`: sin argumentos muestra el estado; con URL crawlea e indexa. */
+async function performIndexCommand(args: string[], ctx: CommandContext): Promise<TerminalLogEntry> {
+  const timestamp = new Date().toLocaleTimeString();
+  const target = (args[0] || '').trim();
+
+  if (target === 'vaciar') {
+    return performIndexClear(ctx);
+  }
+
+  if (!target) {
+    try {
+      const res = await fetch('/api/index');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      const status = data.index || {};
+      const hosts =
+        Array.isArray(status.hosts) && status.hosts.length > 0
+          ? status.hosts.join(', ')
+          : '-';
+      return {
+        id: `index_${Date.now()}`,
+        timestamp,
+        type: 'system',
+        output: ctx.tc('out.indexStatus', {
+          documents: status.documents ?? 0,
+          hosts,
+          terms: status.terms ?? 0,
+          directory: status.directory || '-',
+        }),
+      };
+    } catch (error: any) {
+      return {
+        id: `index_${Date.now()}`,
+        timestamp,
+        type: 'stderr',
+        output: ctx.tc('out.indexError', { message: error?.message || String(error) }),
+      };
+    }
+  }
+
+  try {
+    const res = await fetch('/api/index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: target }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    return {
+      id: `index_${Date.now()}`,
+      timestamp,
+      type: 'system',
+      output: ctx.tc('out.indexDone', {
+        seed: data.seedUrl || target,
+        indexed: data.pagesIndexed ?? 0,
+        visited: data.pagesVisited ?? 0,
+        skipped: data.pagesSkipped ?? 0,
+        ms: data.durationMs ?? 0,
+        documents: data.index?.documents ?? 0,
+      }),
+    };
+  } catch (error: any) {
+    return {
+      id: `index_${Date.now()}`,
+      timestamp,
+      type: 'stderr',
+      output: ctx.tc('out.indexError', { message: error?.message || String(error) }),
+    };
+  }
+}
+
+/** `indexar vaciar`: borra todo el índice local. */
+async function performIndexClear(ctx: CommandContext): Promise<TerminalLogEntry> {
+  const timestamp = new Date().toLocaleTimeString();
+  try {
+    const res = await fetch('/api/index', { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    return {
+      id: `index_${Date.now()}`,
+      timestamp,
+      type: 'system',
+      output: ctx.tc('out.indexCleared', {
+        documents: data.removed.documents,
+        terms: data.removed.terms,
+      }),
+    };
+  } catch (error: any) {
+    return {
+      id: `index_${Date.now()}`,
+      timestamp,
+      type: 'stderr',
+      output: ctx.tc('out.indexError', { message: error?.message || String(error) }),
+    };
+  }
+}
+
+/** `buscar local`: consulta el índice en vez de la web. */
+async function performIndexLocalSearch(
+  rawQuery: string,
+  ctx: CommandContext
+): Promise<TerminalLogEntry> {
+  const timestamp = new Date().toLocaleTimeString();
+  const query = rawQuery.trim().replace(/\s+/g, ' ');
+
+  if (!query) {
+    return {
+      id: `index_${Date.now()}`,
+      timestamp,
+      type: 'stderr',
+      output: ctx.tc('out.indexSearchUsage'),
+    };
+  }
+
+  try {
+    const res = await fetch(`/api/index?q=${encodeURIComponent(query)}&limit=10`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+    const results: any[] = Array.isArray(data.results) ? data.results : [];
+    const documents = data.index?.documents ?? 0;
+
+    if (results.length === 0) {
+      return {
+        id: `index_${Date.now()}`,
+        timestamp,
+        type: 'system',
+        output: ctx.tc('out.indexSearchEmpty', { query, documents }),
+      };
+    }
+
+    const lines = results
+      .map((result, index) => {
+        const title = typeof result.title === 'string' ? result.title : result.url;
+        const url = typeof result.url === 'string' ? result.url : '';
+        const snippet = typeof result.snippet === 'string' ? result.snippet : '';
+        return `${index + 1}. ${title}\n   ${url}${snippet ? `\n   ${snippet}` : ''}`;
+      })
+      .join('\n\n');
+
+    return {
+      id: `index_${Date.now()}`,
+      timestamp,
+      type: 'system',
+      output: `${ctx.tc('out.indexSearchHeader', {
+        query,
+        count: results.length,
+        documents,
+      })}\n\n${lines}`,
+    };
+  } catch (error: any) {
+    return {
+      id: `index_${Date.now()}`,
+      timestamp,
+      type: 'stderr',
+      output: ctx.tc('out.indexError', { message: error?.message || String(error) }),
+    };
+  }
 }
 
 async function performWebSearch(
