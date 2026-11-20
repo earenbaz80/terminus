@@ -28,7 +28,7 @@ describe('TerminusSearchPage', () => {
 
     expect(screen.getAllByText(/TERMINUS/).length).toBeGreaterThan(0);
     expect(screen.getByText('Buscador propio / proveedor actual')).toBeTruthy();
-    expect(screen.getAllByText('DuckDuckGo + Wikipedia').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('DuckDuckGo').length).toBeGreaterThan(0);
 
     fireEvent.change(input, { target: { value: '  computación cuántica  ' } });
     fireEvent.submit(input.closest('form')!);

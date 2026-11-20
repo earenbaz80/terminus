@@ -23,6 +23,7 @@ import { decodeHtmlEntities } from './src/utils/htmlEntities';
 import { htmlToRetroMarkup } from './src/utils/retroHtml';
 import { pythonRunnerPage, PYTHON_RUNNER_CSP } from './src/utils/pythonRunnerPage';
 import { APP_VERSION } from './src/utils/version';
+import { parseDuckDuckGoHtml } from './src/utils/searchScrape';
 import { MAX_TRANSLATE_CHARS, translateText } from './src/utils/translation';
 
 /**
@@ -606,6 +607,8 @@ async function startServer() {
         headers: {
           'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) Terminus/${APP_VERSION}`,
           Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+          'DNT': '1',
+          'Sec-GPC': '1',
         },
         signal: AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS),
       });
@@ -666,109 +669,113 @@ async function startServer() {
   });
 
   app.get('/api/search', async (req, res) => {
-    const query = (req.query.q as string || '').trim();
-    if (!query) {
+    const originalQuery = (req.query.q as string || '').trim();
+    if (!originalQuery) {
       return res.status(400).json({ error: 'Missing query parameter q' });
     }
+
+    // Operadores de búsqueda al estilo de los motores: site:, intitle:, inurl: y -excluir.
+    const readOperator = (name: string): string => {
+      const match = originalQuery.match(new RegExp(`\\b${name}:("[^"]+"|\\S+)`, 'i'));
+      return match ? match[1].replace(/^"/, '').replace(/"$/, '') : '';
+    };
+    const site = readOperator('site');
+    const intitle = readOperator('intitle');
+    const inurl = readOperator('inurl');
+    const excludedTerms: string[] = [];
+    const bareQuery = originalQuery
+      .replace(/\b(?:site|intitle|inurl):("[^"]+"|\S+)/gi, ' ')
+      .replace(/(^|\s)-(\S+)/g, (_match, space: string, term: string) => {
+        excludedTerms.push(term.toLowerCase());
+        return space;
+      })
+      .replace(/\s+/g, ' ')
+      .trim();
+    const query = bareQuery || originalQuery;
 
     try {
       const results: { title: string; url: string; snippet: string; image?: string }[] = [];
       const images: { src: string; alt?: string }[] = [];
 
-      // 1. Query DuckDuckGo Instant Answer API
-      try {
-        const ddgRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, {
-          headers: { 'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) Terminus/${APP_VERSION}` },
-          signal: AbortSignal.timeout(SEARCH_FETCH_TIMEOUT_MS),
-        });
-        if (ddgRes.ok) {
-          const ddgData = await ddgRes.json();
-          if (ddgData.Abstract && ddgData.AbstractURL) {
-            results.push({
-              title: ddgData.Heading || query,
-              url: ddgData.AbstractURL,
-              snippet: ddgData.Abstract,
-              image: ddgData.Image ? (ddgData.Image.startsWith('http') ? ddgData.Image : `https://duckduckgo.com${ddgData.Image}`) : undefined,
+      // 1. Resultados web reales: se descarga la página de resultados de
+      // DuckDuckGo y se extraen título, URL y fragmento de cada enlace.
+      const scrapeDuckDuckGo = async (): Promise<number> => {
+        const endpoints = [
+          `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+          `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
+        ];
+        for (const endpoint of endpoints) {
+          try {
+            const response = await fetch(endpoint, {
+              headers: {
+                'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) Terminus/${APP_VERSION}`,
+                'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+              },
+              signal: AbortSignal.timeout(SEARCH_FETCH_TIMEOUT_MS),
             });
-            if (ddgData.Image) {
-              const fullImg = ddgData.Image.startsWith('http') ? ddgData.Image : `https://duckduckgo.com${ddgData.Image}`;
-              images.push({ src: fullImg, alt: ddgData.Heading });
-            }
-          }
-
-          // Related topics
-          if (Array.isArray(ddgData.RelatedTopics)) {
-            ddgData.RelatedTopics.slice(0, 6).forEach((topic: any) => {
-              if (topic.Text && topic.FirstURL) {
-                const titlePart = topic.Text.split(' - ')[0] || topic.Text.slice(0, 40);
-                const imgUrl = topic.Icon?.URL ? (topic.Icon.URL.startsWith('http') ? topic.Icon.URL : `https://duckduckgo.com${topic.Icon.URL}`) : undefined;
-                results.push({
-                  title: titlePart,
-                  url: topic.FirstURL,
-                  snippet: topic.Text,
-                  image: imgUrl,
-                });
-                if (imgUrl) images.push({ src: imgUrl, alt: titlePart });
+            if (!response.ok) continue;
+            const { text } = await readTextWithLimit(response);
+            const scraped = parseDuckDuckGoHtml(text).slice(0, 10);
+            if (scraped.length === 0) continue;
+            for (const result of scraped) {
+              if (results.length >= 10) break;
+              if (!results.some((existing) => existing.url === result.url)) {
+                results.push(result);
               }
-            });
-          }
-        }
-      } catch {}
-
-      // 2. Query Wikipedia API for rich multilingual encyclopedic search
-      try {
-        const wikiRes = await fetch(`https://es.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=8&namespace=0&format=json`, {
-          signal: AbortSignal.timeout(SEARCH_FETCH_TIMEOUT_MS),
-        });
-        if (wikiRes.ok) {
-          const wikiData = await wikiRes.json();
-          const titles: string[] = wikiData[1] || [];
-          const snippets: string[] = wikiData[2] || [];
-          const urls: string[] = wikiData[3] || [];
-
-          for (let i = 0; i < titles.length; i++) {
-            if (!results.some((r) => r.url === urls[i])) {
-              results.push({
-                title: titles[i],
-                url: urls[i],
-                snippet: snippets[i] || `Artículo de Wikipedia sobre ${titles[i]}`,
-              });
             }
+            if (results.length > 0) return results.length;
+          } catch {
+            // Endpoint bloqueado o sin red: se prueba el siguiente.
           }
         }
-      } catch {}
+        return 0;
+      };
 
-      // 3. Fallback / supplementary DuckDuckGo HTML scraping if sparse
-      if (results.length < 3) {
+      const webResultCount = await scrapeDuckDuckGo();
+
+      // 2. Wikipedia solo complementa cuando la web devolvió muy poco.
+      if (webResultCount < 3) {
         try {
-          const htmlRes = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-            headers: { 'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) Terminus/${APP_VERSION}` },
+          const wikiRes = await fetch(`https://es.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=8&namespace=0&format=json`, {
             signal: AbortSignal.timeout(SEARCH_FETCH_TIMEOUT_MS),
           });
-          if (htmlRes.ok) {
-            const { text: html } = await readTextWithLimit(htmlRes);
-            const linkRegex = /<a\b[^>]*?class=["']result__url["'][^>]*?href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+          if (wikiRes.ok) {
+            const wikiData = await wikiRes.json();
+            const titles: string[] = wikiData[1] || [];
+            const snippets: string[] = wikiData[2] || [];
+            const urls: string[] = wikiData[3] || [];
 
-            let m;
-            while ((m = linkRegex.exec(html)) !== null && results.length < 10) {
-              try {
-                let actualUrl = m[1];
-                if (actualUrl.includes('uddg=')) {
-                  const uMatch = actualUrl.match(/uddg=([^&]+)/);
-                  if (uMatch) actualUrl = decodeURIComponent(uMatch[1]);
-                }
-                const cleanText = m[2].replace(/<[^>]+>/g, '').trim();
-                if (!results.some((r) => r.url === actualUrl) && actualUrl.startsWith('http')) {
-                  results.push({
-                    title: cleanText || actualUrl,
-                    url: actualUrl,
-                    snippet: `Resultado de la búsqueda web para: ${query}`,
-                  });
-                }
-              } catch {}
+            for (let i = 0; i < titles.length; i++) {
+              if (!results.some((r) => r.url === urls[i])) {
+                results.push({
+                  title: titles[i],
+                  url: urls[i],
+                  snippet: snippets[i] || `Artículo de Wikipedia sobre ${titles[i]}`,
+                });
+              }
             }
           }
         } catch {}
+      }
+
+      // El proveedor externo no entiende los operadores: se aplican aquí.
+      if (site || intitle || inurl || excludedTerms.length > 0) {
+        const hostOfResult = (value: string): string => {
+          try {
+            return new URL(value).hostname.toLowerCase();
+          } catch {
+            return '';
+          }
+        };
+        const kept = results.filter((result) => {
+          const haystack = `${result.title} ${result.snippet}`.toLowerCase();
+          if (site && !hostOfResult(result.url).includes(site.toLowerCase())) return false;
+          if (intitle && !result.title.toLowerCase().includes(intitle.toLowerCase())) return false;
+          if (inurl && !result.url.toLowerCase().includes(inurl.toLowerCase())) return false;
+          if (excludedTerms.some((term) => haystack.includes(term))) return false;
+          return true;
+        });
+        results.splice(0, results.length, ...kept);
       }
 
       // If still empty, provide clean search engines destinations

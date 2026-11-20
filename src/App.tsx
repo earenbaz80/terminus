@@ -1284,6 +1284,10 @@ export default function App() {
         onLockNow={() => setLocked(true)}
         surface={surface}
         onSelectSurface={handleSelectSurface}
+        onSearch={(query) => {
+          handleSelectSurface('web');
+          void handleExecuteCommand(`search ${query}`);
+        }}
       />
 
       {/* Main Workspace: real browser surface or the terminal stream */}

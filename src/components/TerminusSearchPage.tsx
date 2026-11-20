@@ -9,7 +9,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { TerminusSearchState, ThemeConfig } from '../types';
-import { TERMINUS_SEARCH_PROVIDER } from '../utils/terminusSearch';
+import { SEARCH_PROVIDERS, splitHighlight, TERMINUS_SEARCH_PROVIDER } from '../utils/terminusSearch';
 import { soundEffects } from '../utils/soundEffects';
 import { useI18n } from '../i18n';
 
@@ -306,7 +306,18 @@ export const TerminusSearchPage: React.FC<TerminusSearchPageProps> = ({
                             {result.title}
                           </span>
                           <span className="mt-1 block text-[11px] leading-relaxed opacity-60">
-                            {result.snippet}
+                            {splitHighlight(result.snippet, query).map((part, partIndex) =>
+                              part.match ? (
+                                <mark
+                                  key={partIndex}
+                                  style={{ backgroundColor: 'transparent', color: theme.accent, fontWeight: 700 }}
+                                >
+                                  {part.text}
+                                </mark>
+                              ) : (
+                                <span key={partIndex}>{part.text}</span>
+                              )
+                            )}
                           </span>
                         </span>
                         <ArrowUpRight
@@ -320,7 +331,19 @@ export const TerminusSearchPage: React.FC<TerminusSearchPageProps> = ({
               </div>
 
               <div className="mt-6 flex flex-wrap items-center justify-between gap-2 text-[9px] uppercase tracking-[0.12em] opacity-45">
-                <span>{t('search.footerProvider', { provider })}</span>
+                <span className="flex flex-wrap items-center gap-2">
+                  {t('search.footerProvider', { provider })}
+                  {SEARCH_PROVIDERS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => handleOpenResult(option.urlTemplate(query))}
+                      className="cursor-pointer underline hover:opacity-80"
+                    >
+                      {option.label} ↗
+                    </button>
+                  ))}
+                </span>
                 <span>{t('search.footerKeys')}</span>
               </div>
             </section>

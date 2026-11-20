@@ -14,6 +14,7 @@ import {
   Loader2,
   MoreHorizontal,
   Plus,
+  Search,
   Terminal,
   Trash2,
   X,
@@ -44,6 +45,8 @@ interface HeaderBarProps {
   onLockNow: () => void;
   surface: 'web' | 'terminal';
   onSelectSurface: (surface: 'web' | 'terminal') => void;
+  /** Búsqueda rápida desde la cabecera; si falta, el campo no se muestra. */
+  onSearch?: (query: string) => void;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -70,10 +73,12 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onLockNow,
   surface,
   onSelectSurface,
+  onSearch,
 }) => {
   const { t } = useI18n();
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
   const [systemMenuOpen, setSystemMenuOpen] = useState(false);
+  const [searchDraft, setSearchDraft] = useState('');
   const activeKind: TabKind = tabs.find((t) => t.id === activeTabId)?.kind === 'terminal' ? 'terminal' : 'web';
   const quickActions = [
     { id: 'monitor', label: t('header.monitor'), icon: Activity, color: '#34d399', onSelect: onOpenMonitor },
@@ -357,6 +362,43 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
       {/* Zone 3: Controls Zone (Theme, View mode, Sound toggle) */}
       <div className="flex items-center gap-3 shrink-0 whitespace-nowrap">
+        {onSearch && (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const query = searchDraft.trim();
+              if (!query) return;
+              soundEffects.playKeyClick();
+              onSearch(query);
+              setSearchDraft('');
+            }}
+            role="search"
+            aria-label={t('header.searchLabel')}
+            className="flex items-center gap-1"
+          >
+            <input
+              type="search"
+              value={searchDraft}
+              onChange={(event) => setSearchDraft(event.target.value)}
+              placeholder={t('header.searchPlaceholder')}
+              aria-label={t('header.searchLabel')}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-24 border bg-transparent px-1.5 py-0.5 text-[10px] outline-hidden placeholder:opacity-40 sm:w-40"
+              style={{ borderColor: theme.border, color: theme.text, caretColor: theme.accent }}
+            />
+            <button
+              type="submit"
+              disabled={!searchDraft.trim()}
+              className="flex h-5 w-5 cursor-pointer items-center justify-center border disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ borderColor: theme.border, color: theme.accent }}
+              title={t('header.searchLabel')}
+              aria-label={t('header.searchLabel')}
+            >
+              <Search className="h-3 w-3" />
+            </button>
+          </form>
+        )}
         {/* Real browser surface vs terminal stream */}
         <div
           className="flex items-center border rounded-xs overflow-hidden text-[10px] font-bold"
