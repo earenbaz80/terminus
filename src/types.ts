@@ -259,6 +259,8 @@ export interface TerminusDesktopApi {
   onFrameContextMenu(listener: (event: FrameContextMenuEvent) => void): () => void;
   /** Ctrl/Cmd+F captured by the desktop shell, including inside direct REAL iframes. */
   onFindShortcut(listener: () => void): () => void;
+  /** `target=_blank`/`window.open` inside the native page, to open in a new tab. */
+  onOpenTab?(listener: (url: string) => void): () => void;
   /** Cosmetic CSS computed from EasyList for a proxied page's original URL. */
   getAdblockCosmetics?(url: string): Promise<string>;
   /** Ad-blocking switch owned by the Electron main process. */

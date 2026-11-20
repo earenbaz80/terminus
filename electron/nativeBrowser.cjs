@@ -12,15 +12,17 @@
  */
 
 const { app, screen } = require('electron');
-const { isWebUrl, chromeUserAgent } = require('./nativeBrowserPolicy.cjs');
+const { isWebUrl, shouldOpenInTab, chromeUserAgent } = require('./nativeBrowserPolicy.cjs');
 
 const FRAME_CONTEXT_MENU_CHANNEL = 'terminus:context-menu:frame';
+const OPEN_TAB_CHANNEL = 'terminus:browser:open-tab';
 // El UA de la plataforma no cambia durante la sesión de la app.
 const CHROME_USER_AGENT = chromeUserAgent();
 const guestSessions = new Set();
 const configuredSessions = new WeakSet();
 let onSiteSessionCreated = () => {};
 let getHostWindow = () => null;
+let isBlockedUrl = () => false;
 
 const configureGuestSession = (siteSession) => {
   guestSessions.add(siteSession);
@@ -58,9 +60,11 @@ const forwardContextMenu = (contents, params) => {
 const registerNativeGuests = ({
   getWindow = () => null,
   onSessionCreated = () => {},
+  isBlocked = () => false,
 } = {}) => {
   getHostWindow = getWindow;
   onSiteSessionCreated = onSessionCreated;
+  isBlockedUrl = isBlocked;
 
   // El invitado hereda el UA de la app al conectarse: hay que reescribirlo en
   // cuanto se adjunta, antes de su primera navegación.
@@ -75,10 +79,14 @@ const registerNativeGuests = ({
 
     configureGuestSession(contents.session);
 
-    // Los enlaces con target=_blank se abren en la misma pestaña; las ventanas
-    // emergentes no se permiten.
+    // `target=_blank` y `window.open` abren pestaña nueva en la app, como en un
+    // navegador; los esquemas que no son web y las URL bloqueadas se rechazan.
     contents.setWindowOpenHandler(({ url }) => {
-      if (isWebUrl(url)) void contents.loadURL(url);
+      const host = getHostWindow();
+      if (!shouldOpenInTab(url, isBlockedUrl) || !host || host.isDestroyed()) {
+        return { action: 'deny' };
+      }
+      host.webContents.send(OPEN_TAB_CHANNEL, url);
       return { action: 'deny' };
     });
 

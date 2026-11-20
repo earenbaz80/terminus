@@ -806,6 +806,39 @@ export default function App() {
     [t]
   );
 
+  // Un enlace con `target=_blank` abre pestaña nueva y activa, como en cualquier
+  // navegador; el invitado nativo ya no recarga la página actual.
+  const openUrlInTab = useCallback((url: string) => {
+    const safe = typeof url === 'string' ? url.trim() : '';
+    if (!/^https?:\/\//i.test(safe)) return;
+    let title = safe;
+    try {
+      title = new URL(safe).hostname || safe;
+    } catch {
+      // Una URL rara se queda como título; la pestaña se abre igual.
+    }
+    const newId = `tab_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newTab: BrowserTab = {
+      id: newId,
+      kind: 'web',
+      title,
+      url: safe,
+      displayUrl: safe,
+      isLoading: true,
+      content: '',
+      history: [safe],
+      historyIndex: 0,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newId);
+  }, []);
+
+  useEffect(() => {
+    const bridge = window.terminusDesktop;
+    if (!bridge?.onOpenTab) return undefined;
+    return bridge.onOpenTab(openUrlInTab);
+  }, [openUrlInTab]);
+
   // Global Keyboard Shortcuts handler
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {

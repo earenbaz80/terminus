@@ -1516,6 +1516,8 @@ async function createArchiveRequest(owner, request) {
 function registerWindowIpc() {
   registerNativeGuests({
     getWindow: () => mainWindow,
+    // Un enlace bloqueado por EasyList no merece una pestaña nueva.
+    isBlocked: (url) => adblockEnabled && isBlockedAdUrl(url),
     onSessionCreated: (siteSession) => {
       if (!adblockEnabled) return undefined;
       if (adblockBlocker) {
