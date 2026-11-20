@@ -23,7 +23,7 @@ Crear una Pull Request desde una rama cuyo historial ha sido reescrito (p. ej., 
    ```bash
    git push --force-with-lease origin main
    ```
-   - Esto actualiza `main` al nuevo hash del historial rewriteado (todos los commits con firma `Edel Arencibia Baez <ereinbaz_80@proton.me>` y sin Codebuff).
+   - Esto actualiza `main` al nuevo hash del historial rewriteado (todos los commits con firma `Edel Arencibia Baez <edelarencibiabaez@gmail.com>` y sin Codebuff).
 
 3. **Restaurar exactamente la protección original**:
    - `allow_force_pushes: false`
@@ -35,9 +35,9 @@ Crear una Pull Request desde una rama cuyo historial ha sido reescrito (p. ej., 
 
 ### Verificación post-push
 
-- `git log origin/main --format='%an <%ae>' | sort | uniq -c | sort -rn` → debe mostrar solo `Edel Arencibia Baez <ereinbaz_80@proton.me>` + dependabot.
+- `git log origin/main --format='%an <%ae>' | sort | uniq -c | sort -rn` → debe mostrar solo `Edel Arencibia Baez <edelarencibiabaez@gmail.com>` + dependabot.
 - `git log --all --format="%b" | grep -c "Codebuff"` → **0**.
-- `npm test` y `npm run lint` deben pasar (283 commits reescritos, 344 pruebas pass, typescript + eslint limpios).
+- `npm test` y `npm run lint` deben pasar (280 commits reescritos, suite completa en verde, typescript + eslint limpios).
 - `git status` → clean.
 
 ### Evitar futuros errores
@@ -46,4 +46,4 @@ Crear una Pull Request desde una rama cuyo historial ha sido reescrito (p. ej., 
 - Nunca intentar crear PR entre ramas cuyo historial fue modificado con `filter-repo`/`filter-branch` sin primero rebasear/restablecer el ancestro común.
 
 ---
-*Documento después del rewrite de 283 commits para remover Codebuff attribution y actualizar email a `ereinbaz_80@proton.me`.*
+*Documento después del rewrite de 280 commits para remover Codebuff attribution y actualizar el email a `edelarencibiabaez@gmail.com`.*
