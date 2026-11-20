@@ -7,6 +7,7 @@ El estado del proyecto, los pendientes y las decisiones cerradas están en [ROAD
 ## Características
 
 - **Dos superficies**: navegador web real y terminal interactiva, con pestañas independientes.
+- **Pestañas vivas**: cada pestaña web conserva su página al cambiar de pestaña (una superficie montada por pestaña), así el audio, las descargas en curso y lo escrito en un formulario sobreviven al cambio; el costo medido está en la medición del hito 6.5 de [ROADMAP.md](ROADMAP.md).
 - **Pestañas de verdad**: un enlace con `target=_blank` o `window.open` abre una pestaña nueva de Terminus, activa, en vez de recargar la página actual; los esquemas que no son web y los enlaces que bloquea el adblock no ganan pestaña.
 - **Permisos por sitio**: cámara y micrófono, ubicación, notificaciones y portapapeles se preguntan una vez por origen con un diálogo nativo y la respuesta se recuerda en `permissions.json`; el resto se niega sin molestar.
 - **Descargas de sitios**: PDFs y ZIPs enlazados se guardan de verdad, con progreso, cancelación y panel propio. El botón «Descargar página» de siempre pasa por el mismo camino: pide dónde guardar (o usa `TERMINUS_DOWNLOAD_DIR`) y deja su fila en el panel, con una sola descarga.
@@ -200,7 +201,7 @@ La prueba automatizada equivalente es `npm run test:e2e:installed`, que además 
 
 ## Arquitectura
 
-- `src/App.tsx`: estado de pestañas, sesión, historial global, modales y composición de la UI.
+- `src/App.tsx`: estado de pestañas, sesión, historial global, modales y composición de la UI; monta una superficie por pestaña web y deja la inactiva oculta pero viva.
 - `src/components/WebBrowserSurface.tsx`: navegador, barra de direcciones, zoom, búsqueda (incluido el campo de la pantalla de inicio), descargas y paneles.
 - `src/components/HeaderBar.tsx`: pestañas, herramientas y fila superior con el menú de configuración y los controles de ventana.
 - `src/components/SettingsMenu.tsx`: menú de configuración con audio (mute, sintetizador, WAV), apariencia (temas, B&W, CRT) y red y privacidad (excepción de destinos privados).

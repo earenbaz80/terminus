@@ -54,6 +54,11 @@ export const FOCUS_ADDRESS_EVENT = 'termbrowser:focus-address';
 interface WebBrowserSurfaceProps {
   theme: ThemeConfig;
   tab?: BrowserTab;
+  /**
+   * `false` para una pestaña que sigue montada en segundo plano: su página vive
+   * (audio, descargas, formularios) pero no puede robar el foco ni abrir paneles.
+   */
+  active?: boolean;
   onCommand: (cmd: string) => void;
   bookmarks: Bookmark[];
   onAddBookmark: (title: string, url: string) => void;
@@ -260,6 +265,7 @@ const buildAddressSuggestions = (
 export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   theme,
   tab,
+  active = true,
   onCommand,
   bookmarks,
   onAddBookmark,
@@ -407,10 +413,12 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   // Electron catches Ctrl/Cmd+F before Chromium handles it, including when the
   // focused document is a cross-origin REAL iframe whose keys never reach us.
   useEffect(() => {
+    // Solo la pestaña activa responde al atajo: con las superficies vivas, todas
+    // escuchan el mismo canal del proceso principal.
     const api = window.terminusDesktop;
-    if (!api?.onFindShortcut) return undefined;
+    if (!active || !api?.onFindShortcut) return undefined;
     return api.onFindShortcut(() => setFindOpen(true));
-  }, []);
+  }, [active]);
 
   // The tab's own choice wins; otherwise a saved site preference, and finally the
   // real page by default: dark and text are opt-in per site.
@@ -479,6 +487,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
 
   // Ctrl/Cmd+L is handled by the app and lands here: focus and select the address.
   useEffect(() => {
+    if (!active) return undefined;
     const focusAddress = () => {
       const input = addressInputRef.current;
       if (!input) return;
@@ -488,7 +497,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     };
     window.addEventListener(FOCUS_ADDRESS_EVENT, focusAddress);
     return () => window.removeEventListener(FOCUS_ADDRESS_EVENT, focusAddress);
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     if (!commandsOpen) return;
@@ -610,6 +619,9 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
     // Release the field so the page can take keyboard focus; the custom caret stays visible.
     addressInputRef.current?.blur();
     onCommand(raw);
+    // Un comando puede abrir otra pestaña y dejar esta en segundo plano: si no es
+    // una URL, el campo se vacía para que no quede el texto del comando dentro.
+    if (!/^(https?:\/\/|[^\s]+\.[^\s]{2,})/i.test(raw)) setAddress('');
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -712,16 +724,17 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   // Repetir `home` no cambia de pantalla: el aviso enfoca el campo al momento. Al llegar
   // desde una página se encarga el efecto de abajo, cuando el inicio aparece.
   useEffect(() => {
+    if (!active) return undefined;
     const focusStartInput = () => startInputRef.current?.focus();
     window.addEventListener(HOME_FOCUS_EVENT, focusStartInput);
     return () => window.removeEventListener(HOME_FOCUS_EVENT, focusStartInput);
-  }, []);
+  }, [active]);
 
   // Llegar al inicio (arranque o `home`) deja el campo listo para escribir, como la
   // página de resultados cuando no tiene consulta.
   useEffect(() => {
-    if (startPageVisible) startInputRef.current?.focus();
-  }, [startPageVisible]);
+    if (startPageVisible && active) startInputRef.current?.focus();
+  }, [startPageVisible, active]);
 
   // La lista de descargas la manda el proceso principal: el renderer no ve
   // `will-download`, así que escucha el aviso y pide el estado inicial al montar.

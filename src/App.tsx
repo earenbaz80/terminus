@@ -1150,17 +1150,19 @@ export default function App() {
     setBookmarks((prev) => prev.filter((bm) => bm.id !== id));
   };
 
-  const handleSetViewMode = (mode: PageMode) => {
-    setTabs((prev) => prev.map((t) => (t.id === activeTabId ? { ...t, viewMode: mode } : t)));
+  const handleSetViewMode = (tabId: string, mode: PageMode) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, viewMode: mode } : t)));
   };
 
   // El navegador nativo navega por su cuenta (enlaces, redirecciones): la
   // pestaña refleja esa URL y título para que la barra y el historial sigan bien.
+  // Con una superficie viva por pestaña, la que navega en segundo plano también
+  // actualiza su propia pestaña: el id viene de la superficie, no del estado activo.
   const handleNativeNavigation = useCallback(
-    (url: string, title: string) => {
+    (tabId: string, url: string, title: string) => {
       setTabs((prev) =>
         prev.map((tab) => {
-          if (tab.id !== activeTabId) return tab;
+          if (tab.id !== tabId) return tab;
           if (tab.url === url) {
             return title && tab.title !== title ? { ...tab, title } : tab;
           }
@@ -1177,12 +1179,12 @@ export default function App() {
         })
       );
     },
-    [activeTabId]
+    []
   );
 
-  const handleSetZoom = (zoom: number) => {
+  const handleSetZoom = (tabId: string, zoom: number) => {
     const next = Math.min(2, Math.max(0.5, Math.round(zoom * 10) / 10));
-    setTabs((prev) => prev.map((t) => (t.id === activeTabId ? { ...t, zoom: next } : t)));
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, zoom: next } : t)));
   };
 
   const handleCreateFile = (path: string, name: string, content: string) => {
@@ -1279,6 +1281,44 @@ export default function App() {
     return <LockScreen theme={theme} onUnlock={() => setLocked(false)} />;
   }
 
+  // Superficies web: una por pestaña, todas montadas. Cada una es dueña de su
+  // `<webview>` y de sus paneles; los callbacks van atados al id de SU pestaña.
+  const webTabs = tabs.filter((tab) => tab.kind === 'web');
+  const renderBrowserSurface = (tab: BrowserTab | undefined, isActive: boolean) => (
+    <WebBrowserSurface
+      key={tab?.id ?? 'blank'}
+      theme={theme}
+      tab={tab}
+      active={isActive}
+      onCommand={handleExecuteCommand}
+      bookmarks={bookmarks}
+      onAddBookmark={handleAddBookmark}
+      onRemoveBookmark={handleRemoveBookmark}
+      onSetViewMode={(mode) => {
+        if (tab) handleSetViewMode(tab.id, mode);
+      }}
+      globalHistory={browserHistoryUrls(browserHistory)}
+      onClearHistory={() => setBrowserHistory(clearBrowserHistory())}
+      onSetZoom={(zoom) => {
+        if (tab) handleSetZoom(tab.id, zoom);
+      }}
+      onPageStatus={(status) => {
+        if (!tab) return;
+        setTabs((prev) =>
+          prev.map((entry) =>
+            entry.id === tab.id ? { ...entry, statusCode: status, isLoading: false } : entry
+          )
+        );
+      }}
+      latencyMs={metrics.latencyMs}
+      commandNotice={isActive ? webNotice : null}
+      onDismissCommandNotice={() => setWebNotice(null)}
+      onNativeNavigation={(url, title) => {
+        if (tab) handleNativeNavigation(tab.id, url, title);
+      }}
+    />
+  );
+
   return (
     <div
       className={`w-screen h-screen flex flex-col overflow-hidden ${crtEnabled ? 'crt-effect' : ''} ${
@@ -1326,29 +1366,35 @@ export default function App() {
       {/* Main Workspace: real browser surface or the terminal stream */}
       <main className="flex-1 flex flex-col overflow-hidden relative">
         {surface === 'web' ? (
-          <WebBrowserSurface
-            theme={theme}
-            tab={tabs.find((t) => t.id === activeTabId)}
-            onCommand={handleExecuteCommand}
-            bookmarks={bookmarks}
-            onAddBookmark={handleAddBookmark}
-            onRemoveBookmark={handleRemoveBookmark}
-            onSetViewMode={handleSetViewMode}
-            globalHistory={browserHistoryUrls(browserHistory)}
-            onClearHistory={() => setBrowserHistory(clearBrowserHistory())}
-            onSetZoom={handleSetZoom}
-            onPageStatus={(status) =>
-              setTabs((prev) =>
-                prev.map((tab) =>
-                  tab.id === activeTabId ? { ...tab, statusCode: status, isLoading: false } : tab
-                )
-              )
-            }
-            latencyMs={metrics.latencyMs}
-            commandNotice={webNotice}
-            onDismissCommandNotice={() => setWebNotice(null)}
-            onNativeNavigation={handleNativeNavigation}
-          />
+          // Una superficie por pestaña web, montada siempre: la inactiva queda fuera
+          // de vista pero viva, así su `<webview>` sigue sonando, descargando y
+          // conservando lo escrito. `visibility` en vez de `display` mantiene el
+          // invitado adjunto al DOM.
+          <div className="relative h-full w-full">
+            {webTabs.length === 0 ? (
+              <div className="absolute inset-0">{renderBrowserSurface(undefined, true)}</div>
+            ) : (
+              webTabs.map((tab) => {
+                const isActive = tab.id === activeTabId;
+                return (
+                  <div
+                    key={tab.id}
+                    className={
+                      isActive
+                        ? 'absolute inset-0'
+                        : 'absolute inset-0 invisible pointer-events-none'
+                    }
+                    aria-hidden={isActive ? undefined : true}
+                    data-e2e="browser-pane"
+                    data-tab-id={tab.id}
+                    data-active={isActive ? 'true' : 'false'}
+                  >
+                    {renderBrowserSurface(tab, isActive)}
+                  </div>
+                );
+              })
+            )}
+          </div>
         ) : (
           <Suspense
             fallback={

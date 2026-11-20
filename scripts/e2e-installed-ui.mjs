@@ -64,7 +64,11 @@ const HISTORY_KEY = 'termbrowser_cmd_history_v1';
 const UI_MARKER = 'terminus-theme-select';
 // La barra de direcciones se identifica por su relación con la lista de sugerencias
 // (atributos del DOM, no el aria-label del idioma activo), así la prueba sirve en cualquier idioma.
-const ADDRESS_SELECTOR = 'input[aria-controls="terminus-address-suggestions"]';
+// Cada pestaña web monta su propia superficie, así que la barra que se usa es la
+// del panel activo: sin este prefijo `querySelector` devolvería la de una pestaña
+// de fondo, que además está invisible y no acepta foco.
+const ACTIVE_PANE = '[data-e2e="browser-pane"][data-active="true"]';
+const ADDRESS_SELECTOR = `${ACTIVE_PANE} input[aria-controls="terminus-address-suggestions"]`;
 const SEARCH_QUERY = 'terminus e2e ui';
 const LOCALE_KEY = 'terminus_locale_v1';
 // La sesión que la app guarda y restaura: es la fuente de verdad de las pestañas.
@@ -74,13 +78,22 @@ const SECOND_QUERY = 'terminus e2e segunda pestana';
 const e2eLocale = (process.env.TERMINUS_E2E_LOCALE ?? '').trim();
 const START_FORM = 'form[role="search"]';
 // Ancla propia del campo de búsqueda del inicio: no depende de su posición ni del idioma.
-const START_INPUT = 'input[data-e2e="start-search-input"]';
+// Cada pestaña web monta su propio inicio, así que se escribe en el del panel
+// activo; el segundo término cubre un inicio que no cuelgue de ninguna pestaña (no
+// hay negación de ancestro en CSS, por eso la unión en vez de `:not()` anidado).
+const START_INPUT =
+  `${ACTIVE_PANE} input[data-e2e="start-search-input"], ` +
+  'input[data-e2e="start-search-input"]:not([data-e2e="browser-pane"] input)';
 // El `<header>` lleva su propio formulario de búsqueda, así que en el DOM conviven dos
 // `form[role="search"]`: el de la cabecera y el de la pantalla (inicio o resultados).
 // `PAGE_SEARCH_FORMS` deja solo los de la pantalla y `START_FORM_SCOPED` ancla el del
 // inicio por su campo, sin depender de cuál aparezca primero en el documento.
-const PAGE_SEARCH_FORMS = `[...document.querySelectorAll(${JSON.stringify(START_FORM)})].filter((form) => !form.closest('header'))`;
-const START_FORM_SCOPED = `${START_FORM}:has(${START_INPUT})`;
+const PAGE_SEARCH_FORMS = `[...document.querySelectorAll(${JSON.stringify(START_FORM)})].filter((form) =>
+  !form.closest('header') &&
+  (!form.closest('[data-e2e="browser-pane"]') || form.closest(${JSON.stringify(ACTIVE_PANE)})))`;
+// `:has()` no admite la lista de `START_INPUT` (dos alternativas): dentro de `:has`
+// va el selector simple del campo.
+const START_FORM_SCOPED = `${START_FORM}:has(input[data-e2e="start-search-input"])`;
 // Cajas donde se escribe durante la corrida; `where` de una tecla ajena dice en cuál cayó.
 const STRAY_FIELDS = [
   ['inicio', START_INPUT],

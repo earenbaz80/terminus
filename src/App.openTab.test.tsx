@@ -61,34 +61,38 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const tabButtons = (): HTMLElement[] =>
-  Array.from(document.querySelectorAll<HTMLElement>('[role="tab"]'));
-/** La barra de direcciones de la superficie visible (aún hay una sola montada). */
-const addressOfSurface = (): HTMLInputElement | null =>
-  document.querySelector<HTMLInputElement>('input[aria-controls="terminus-address-suggestions"]');
+const panes = (): HTMLElement[] =>
+  Array.from(document.querySelectorAll<HTMLElement>('[data-e2e="browser-pane"]'));
+const activePane = (): HTMLElement | null =>
+  document.querySelector<HTMLElement>('[data-e2e="browser-pane"][data-active="true"]');
 
 describe('target=_blank en la página nativa', () => {
   it('abre la URL en una pestaña nueva y la deja activa', async () => {
     render(<App />);
-    await waitFor(() => expect(tabButtons()).toHaveLength(1));
+    await waitFor(() => expect(panes()).toHaveLength(1));
     expect(openTabListener).toBeTruthy();
 
     act(() => openTabListener?.('https://example.com/blank'));
 
-    await waitFor(() => expect(tabButtons()).toHaveLength(2));
-    // La nueva queda activa, con su URL en la barra, y la anterior sigue abierta.
-    expect(document.querySelectorAll('[role="tab"][aria-selected="true"]')).toHaveLength(1);
-    expect(addressOfSurface()?.value).toBe('https://example.com/blank');
+    await waitFor(() => expect(panes()).toHaveLength(2));
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    // La nueva queda activa y la anterior sigue montada con su propia página.
+    expect(activePane()?.dataset.tabId).not.toBe('tab_a');
+    const address = activePane()?.querySelector<HTMLInputElement>(
+      'input[aria-controls="terminus-address-suggestions"]'
+    );
+    expect(address?.value).toBe('https://example.com/blank');
+    expect(panes()[0].dataset.tabId).toBe('tab_a');
   });
 
   it('ignora esquemas que no son web', async () => {
     render(<App />);
-    await waitFor(() => expect(tabButtons()).toHaveLength(1));
+    await waitFor(() => expect(panes()).toHaveLength(1));
 
     act(() => openTabListener?.('file:///C:/Windows/System32'));
     act(() => openTabListener?.('javascript:alert(1)'));
 
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(tabButtons()).toHaveLength(1);
+    expect(panes()).toHaveLength(1);
   });
 });
