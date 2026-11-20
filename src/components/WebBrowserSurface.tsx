@@ -752,7 +752,10 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       setFindStatus('');
       return;
     }
-    if (!usesProxy) {
+    // En NATIVO no hay iframe proxied al que mandar la búsqueda, así que el aviso es
+    // el mismo que en REAL: para buscar dentro de la página hay que pasar a OSCURO
+    // o TEXTO. Sin esto el modo nativo se quedaba sin decir nada al escribir.
+    if (!usesProxy || nativeViewActive) {
       setFindStatus(t('find.changeMode'));
       return;
     }
@@ -760,7 +763,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       { source: 'termbrowser-find', query: findQuery, backwards },
       '*'
     );
-  }, [findQuery, usesProxy, t]);
+  }, [findQuery, usesProxy, nativeViewActive, t]);
 
   // La página nativa es un <webview>: Chromium la dibuja dentro del documento, así
   // que ocupa su hueco del layout y la interfaz se pinta encima sin recortarla.

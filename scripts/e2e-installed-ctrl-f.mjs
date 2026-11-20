@@ -53,6 +53,16 @@ const FIND_SHORTCUT_MARKER = 'terminus:find:shortcut';
 // (atributos del DOM, no el aria-label del idioma activo), así la prueba sirve en cualquier idioma.
 const ADDRESS_SELECTOR = 'input[aria-controls="terminus-address-suggestions"]';
 const EXTERNAL_URL = 'https://example.com/';
+// Aviso de «cambia de modo» (`find.changeMode` en `src/i18n/messages.ts`): la lista
+// cubre los cinco idiomas que publica la app, así que la aserción del modo NATIVO no
+// depende del idioma activo.
+const CHANGE_MODE_HINTS = [
+  'Cambia a OSCURO o TEXTO para buscar dentro de esta página.',
+  'Switch to DARK or TEXT to search within this page.',
+  'Wechsle zu DUNKEL oder TEXT, um auf dieser Seite zu suchen.',
+  'Passez en SOMBRE ou TEXTE pour rechercher dans cette page.',
+  'Passa a SCURO o TESTO per cercare in questa pagina.',
+];
 
 // --- Anclas del DOM (ninguna depende del idioma activo) ---
 // Conmutador del buscador: atributo fijo de teclado, no la etiqueta traducida.
@@ -817,6 +827,70 @@ async function main() {
   );
 
   await navigateToPage(cdp, EXTERNAL_URL, 'example.com');
+
+  // La app abre la página externa en modo NATIVO (`<webview>`) cuando el motor nativo
+  // está disponible. Esa rama se cubre antes de forzar REAL: la página tiene que vivir
+  // en el invitado y el buscador no puede entrar en él, así que tiene que avisarlo.
+  const nativePicked = await cdp.evaluate(`(() => {
+    const button = document.querySelector('[data-e2e="view-mode-native"]');
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert.equal(nativePicked, true, 'No se encontró el conmutador del modo NATIVO.');
+
+  const nativePage = await waitForExpression(
+    cdp,
+    `(() => {
+      const guest = document.querySelector('webview');
+      const rect = guest?.getBoundingClientRect();
+      return {
+        webview:
+          guest?.getAttribute('src') ??
+          (typeof guest?.getURL === 'function' ? guest.getURL() : null),
+        iframe: Boolean(document.querySelector('iframe')),
+        rect: rect ? { width: rect.width, height: rect.height } : null,
+      };
+    })()`,
+    (state) =>
+      Boolean(
+        state.webview?.includes('example.com') &&
+          !state.iframe &&
+          state.rect &&
+          state.rect.width > 100 &&
+          state.rect.height > 100,
+      ),
+    'la página dentro del <webview> del modo NATIVO',
+    20000,
+  );
+
+  const nativeFindOpened = await cdp.evaluate(`(() => {
+    const toggle = document.querySelector('${FIND_TOGGLE}');
+    if (!toggle) return false;
+    toggle.click();
+    return true;
+  })()`);
+  assert.equal(
+    nativeFindOpened,
+    true,
+    `No se encontró el conmutador del buscador (${FIND_TOGGLE}) en modo NATIVO.`,
+  );
+  assert.equal(await waitFindOpen(cdp, 5000), true, 'El buscador no se abrió en modo NATIVO.');
+
+  await setFindQuery(cdp, 'Example');
+  const changeMode = await waitForExpression(
+    cdp,
+    FIND_BAR_EXPRESSION,
+    (state) => CHANGE_MODE_HINTS.includes(state.status),
+    'el aviso de cambiar de modo en el buscador',
+    10000,
+  );
+  assert.equal(changeMode.frameMode, null, 'El modo NATIVO no debe tener un iframe proxied.');
+  await closeFindBar(cdp);
+
+  pass(
+    `modo NATIVO: la página vive en el <webview> (${nativePage.webview}) y el buscador pide cambiar de modo («${changeMode.status}»).`,
+  );
 
   // La vista REAL usa un iframe directo (sin `?mode`), así que no pasa por searchInView:
   // aquí solo se comprueba que el conmutador existe y deja la página cross-origin.
