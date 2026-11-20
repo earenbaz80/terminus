@@ -25,6 +25,8 @@ import { pythonRunnerPage, PYTHON_RUNNER_CSP } from './src/utils/pythonRunnerPag
 import { APP_VERSION } from './src/utils/version';
 import { parseDuckDuckGoHtml } from './src/utils/searchScrape';
 import { MAX_TRANSLATE_CHARS, translateText } from './src/utils/translation';
+import { TerminusSearchIndex } from './src/utils/searchIndex';
+import { crawlSite } from './src/utils/searchCrawler';
 
 /**
  * Converts any HTML document into readable plain text, without relying on <p>/<h*> markup.
@@ -231,6 +233,55 @@ async function startServer() {
 
   const API_TOKEN = crypto.randomBytes(32).toString('hex');
   const SESSION_ID = crypto.randomBytes(32).toString('hex');
+
+  // Índice local de páginas: vive en el servidor porque escribe en disco. Por
+  // defecto va a los datos de la app, no a la carpeta temporal, que el sistema
+  // puede purgar; TERMINUS_SEARCH_INDEX_DIR lo mueve.
+  const appDataDirectory = (): string => {
+    if (process.platform === 'win32') {
+      return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+    }
+    if (process.platform === 'darwin') {
+      return path.join(os.homedir(), 'Library', 'Application Support');
+    }
+    return process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+  };
+  const searchIndex = new TerminusSearchIndex(
+    process.env.TERMINUS_SEARCH_INDEX_DIR?.trim() ||
+      path.join(appDataDirectory(), 'Terminus', 'search-index')
+  );
+
+  const pageTitle = (html: string): string => {
+    const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const raw = match?.[1]?.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || '';
+    return decodeHtmlEntities(raw).slice(0, 200);
+  };
+
+  // Misma descarga segura que /api/view: fetchRemote valida cada salto y fija
+  // la IP resuelta, así que el crawler no puede rebotar a la red privada.
+  const fetchPageForIndex = async (url: string) => {
+    const response = await fetchRemote(url, {
+      headers: {
+        'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) Terminus/${APP_VERSION}`,
+        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        'DNT': '1',
+        'Sec-GPC': '1',
+      },
+      signal: AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const contentType = response.headers.get('content-type') || '';
+    if (!/html|xml|text\/plain/i.test(contentType)) return null;
+
+    const { text: html } = await readTextWithLimit(response);
+    const readable = htmlToReadableText(html, response.url || url);
+    return {
+      url: response.url || url,
+      title: pageTitle(html) || url,
+      text: readable.text,
+      links: readable.links.map((link) => link.href),
+    };
+  };
 
   // The proxied document is sandboxed without allow-same-origin. Its image
   // requests are cross-site and do not carry our SameSite=Strict cookie, so
@@ -857,6 +908,54 @@ async function startServer() {
     }
 
     return res.json({ ok: true, text: result.text, target });
+  });
+
+  // Índice local: GET devuelve el estado o los resultados de una consulta; POST
+  // indexa una URL y sus enlaces. El crawler aplica sus propios topes.
+  app.get('/api/index', async (req, res) => {
+    const query = String(req.query.q || '').trim();
+    await searchIndex.load();
+    if (!query) {
+      return res.json({ ok: true, index: searchIndex.status() });
+    }
+
+    const parsedLimit = Number.parseInt(String(req.query.limit ?? ''), 10);
+    const limit = Number.isInteger(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 50) : 10;
+    return res.json({
+      ok: true,
+      query,
+      results: searchIndex.search(query, limit),
+      index: searchIndex.status(),
+    });
+  });
+
+  app.post('/api/index', async (req, res) => {
+    const rawUrl = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+    try {
+      const parsed = new URL(rawUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('protocolo');
+      if (isForbiddenMetadataHost(parsed)) {
+        return res.status(403).json({ error: 'blocked_host', message: 'Ese host no se puede indexar.' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'invalid_url', message: 'Se esperaba una dirección http(s) válida.' });
+    }
+
+    try {
+      await searchIndex.load();
+      const result = await crawlSite(
+        rawUrl,
+        { fetchPage: fetchPageForIndex, indexPage: (page) => searchIndex.addDocument(page) },
+        { sameHost: true, delayMs: 150 }
+      );
+      return res.json({ ok: true, ...result, index: searchIndex.status() });
+    } catch (error) {
+      console.warn('[Terminus] La indexación falló.', error);
+      return res.status(502).json({
+        error: 'crawl_failed',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   // Real DNS lookup endpoint

@@ -161,6 +161,8 @@ const COMMON_COMMANDS = [
   'curl -X GET ',
   'scrape ',
   'reader',
+  'indexar ',
+  'buscar local ',
   'resumir',
   'resumen',
   'idioma',
