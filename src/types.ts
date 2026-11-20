@@ -259,6 +259,8 @@ export interface TerminusDesktopApi {
   onFrameContextMenu(listener: (event: FrameContextMenuEvent) => void): () => void;
   /** Ctrl/Cmd+F captured by the desktop shell, including inside direct REAL iframes. */
   onFindShortcut(listener: () => void): () => void;
+  /** `target=_blank`/`window.open` inside the native page, to open in a new tab. */
+  onOpenTab?(listener: (url: string) => void): () => void;
   /** Cosmetic CSS computed from EasyList for a proxied page's original URL. */
   getAdblockCosmetics?(url: string): Promise<string>;
   /** Ad-blocking switch owned by the Electron main process. */
@@ -267,6 +269,11 @@ export interface TerminusDesktopApi {
   /** Private-network policy owned by the Electron main process. */
   getNetworkState?(): Promise<NetworkPolicyState>;
   setAllowPrivateNetworks?(allowPrivate: boolean): Promise<NetworkPolicyState>;
+  /** Downloads started inside the native browser sessions. */
+  listDownloads?(): Promise<DownloadEntry[]>;
+  cancelDownload?(id: string): Promise<boolean>;
+  showDownload?(id: string): Promise<boolean>;
+  onDownloadsUpdate?(listener: (update: { downloads: DownloadEntry[] }) => void): () => void;
   /** Update check owned by the Electron main process; it never installs anything. */
   getUpdateState?(): Promise<UpdateState>;
   setUpdateMode?(mode: UpdateMode): Promise<UpdateState>;
@@ -274,6 +281,25 @@ export interface TerminusDesktopApi {
   /** Downloads, verifies and runs the published installer; never opens a browser. */
   installUpdate?(): Promise<UpdateInstallResult>;
   onUpdateProgress?(listener: (progress: UpdateProgress) => void): () => void;
+}
+
+/** Estado de una descarga tal como lo publica el proceso principal. */
+export type DownloadState = 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+
+export interface DownloadEntry {
+  id: string;
+  name: string;
+  url: string;
+  host: string;
+  state: DownloadState;
+  received: number;
+  total: number;
+  /** Porcentaje entero, o `null` mientras el sitio no anuncia el tamaño. */
+  percent: number | null;
+  savePath: string;
+  startedAt: number;
+  endedAt: number | null;
+  error: string;
 }
 
 /**

@@ -7,11 +7,16 @@ El estado del proyecto, los pendientes y las decisiones cerradas están en [ROAD
 ## Características
 
 - **Dos superficies**: navegador web real y terminal interactiva, con pestañas independientes.
+- **Pestañas vivas**: cada pestaña web conserva su página al cambiar de pestaña (una superficie montada por pestaña), así el audio, las descargas en curso y lo escrito en un formulario sobreviven al cambio; el costo medido está en la medición del hito 6.5 de [ROADMAP.md](ROADMAP.md).
+- **Pestañas de verdad**: un enlace con `target=_blank` o `window.open` abre una pestaña nueva de Terminus, activa, en vez de recargar la página actual; los esquemas que no son web y los enlaces que bloquea el adblock no ganan pestaña.
+- **Permisos por sitio**: cámara y micrófono, ubicación, notificaciones y portapapeles se preguntan una vez por origen con un diálogo nativo y la respuesta se recuerda en `permissions.json`; el resto se niega sin molestar.
+- **Descargas de sitios**: PDFs y ZIPs enlazados se guardan de verdad, con progreso, cancelación y panel propio. El botón «Descargar página» de siempre pasa por el mismo camino: pide dónde guardar (o usa `TERMINUS_DOWNLOAD_DIR`) y deja su fila en el panel, con una sola descarga.
 - **Cabecera única**: pestañas, herramientas, controles de ventana y menú de configuración (audio, temas, B&W, CRT y red) en una sola barra.
 - **Navegador**: barra de direcciones con sugerencias de marcadores e historial global, historial por pestaña, favoritos, indicador HTTPS/HTTP y descarga de la página.
+- **Descargas reales**: los enlaces con `Content-Disposition` de los sitios llegan al proceso principal, que abre el diálogo de guardado, escribe en la carpeta elegida y publica progreso en un panel de la barra, con cancelar y «ver en carpeta».
 - **Búsqueda web desde el inicio**: el campo de la pantalla de inicio busca directamente, sin abrir otra pantalla antes; las sugerencias son clicables y los resultados aparecen en Terminus Search.
 - **Vistas de página**: `REAL` (iframe directo cuando el sitio lo permite), `OSCURO` (proxy con hoja retro) y `TEXTO` (extracción legible).
-- **Búsqueda en página** con `Ctrl+F` en las tres vistas; en Electron un atajo global la captura incluso con el foco dentro de un iframe REAL cross-origin. **Zoom por pestaña** con `Ctrl++`, `Ctrl+-` y `Ctrl+0`.
+- **Búsqueda en página** con `Ctrl+F` en las cuatro vistas; en Electron un atajo global la captura incluso con el foco dentro de un iframe REAL cross-origin o del `<webview>` NATIVO. En NATIVO busca Chromium dentro de la página (`findInPage`), con resaltado, recuento `n/m` y saltos con Enter, `Shift+Enter` o los botones siguiente/anterior; en OSCURO y TEXTO la busca el documento proxificado. Solo la vista REAL directa pide cambiar de modo. **Zoom por pestaña** con `Ctrl++`, `Ctrl+-` y `Ctrl+0`.
 - **Terminal**: intérprete interno, PTY real con CMD/PowerShell/Bash en Electron, comandos de navegación, archivos virtuales y workspace local.
 - **Panel de archivos**, monitor de recursos, scripts, extensiones, atajos, ayuda y bóveda cifrada.
 - **Interfaz en cinco idiomas**: español, alemán, francés, italiano e inglés, con cambio en vivo desde Configuración y español como referencia.
@@ -87,7 +92,7 @@ npm test                      # Vitest
 npm run build                 # cliente Vite con code-splitting
 npm run build:server
 npm run test:e2e:adblock     # Electron empaquetado: red, popups y cosméticos
-npm run test:e2e:installed    # Windows: Ctrl+F y búsqueda OSCURO/TEXTO
+npm run test:e2e:installed    # Windows: Ctrl+F en NATIVO, OSCURO y TEXTO
 npm run test:e2e:installed:ui # Windows: cabecera, tema persistido y búsqueda en un paso
 npm run test:e2e:network      # Windows: interruptor de red en la app empaquetada y en desktop:dev
 npm run test:e2e:python-sandbox # Chromium real; requiere npx playwright install chromium
@@ -97,9 +102,9 @@ Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds cor
 
 `test:e2e:adblock` arranca `release/win-unpacked/Terminus.exe` con Playwright, sirve un fixture local de anuncios y comprueba el bloqueo de red y de popups. Después navega a `https://example.com/` para verificar que los cosméticos de EasyList se aplican al iframe proxificado; el fixture local no sirve para cosméticos porque `127.0.0.1` no tiene eTLD. Requiere haber ejecutado `npm run desktop:dir` antes.
 
-`test:e2e:installed` requiere Windows, una sesión de escritorio interactiva y la app instalada a partir del build actual. Arranca una copia aislada con perfil temporal, usa `https://example.com/` para el iframe REAL cross-origin y un fixture local para las vistas proxificadas, envía `Ctrl+F` con `SendKeys` y comprueba una búsqueda real en OSCURO y TEXTO. Si el ejecutable está en otra ruta, define `TERMINUS_INSTALLED_EXE`.
+`test:e2e:installed` requiere Windows, una sesión de escritorio interactiva y la app instalada a partir del build actual. Arranca una copia aislada con perfil temporal, usa `https://example.com/` para el `<webview>` NATIVO y el iframe REAL cross-origin, y un fixture local para las vistas proxificadas, envía `Ctrl+F` con `SendKeys` y comprueba la búsqueda real en NATIVO (recuento y siguiente/anterior dentro del invitado), OSCURO y TEXTO. Si el ejecutable está en otra ruta, define `TERMINUS_INSTALLED_EXE`.
 
-`test:e2e:installed:ui` usa el mismo arranque aislado (perfil temporal y CDP) contra la app empaquetada y cubre la interfaz: un solo `<header>` con las pestañas y los controles de ventana dentro, el menú de configuración abierto y un cambio de tema que queda en `localStorage` y se aplica tras recargar el renderer, y la búsqueda del inicio en un paso (escribir y Enter, sin botón intermedio). Falla si el build instalado no es el actual.
+`test:e2e:installed:ui` usa el mismo arranque aislado (perfil temporal y CDP) contra la app empaquetada y cubre la interfaz: un solo `<header>` con las pestañas y los controles de ventana dentro, el menú de configuración abierto y un cambio de tema que queda en `localStorage` y se aplica tras recargar el renderer, la búsqueda del inicio en un paso (escribir y Enter, sin botón intermedio), las pestañas con su historial y su restauración, y una descarga real desde un fixture local: el archivo se comprueba en disco y su fila en el panel. Falla si el build instalado no es el actual.
 
 `test:e2e:network` cubre la sección Red y privacidad de punta a punta: abre el menú, lee el estado que muestra y lo contrasta con lo que hace de verdad `/api/view` contra un fixture en `127.0.0.1` que levanta el propio guion, así que no necesita internet. Con la app empaquetada (`TERMINUS_BUILD_DIR`, por defecto `release/win-unpacked`) el cambio rige en la petición siguiente; con `electron .` prueba el camino de `desktop:dev`, donde el servidor es un proceso hijo: el menú guarda la decisión, el proxy y `/api/dns` siguen bloqueando, avisa de que hace falta reiniciar, y tras relanzar con el mismo perfil la decisión guardada se aplica a los dos endpoints. Falla si el menú y el proxy no coinciden. Ojo: `/api/view` responde 502 ante un destino privado rechazado, no 403. Cubre los dos endpoints de la política, `/api/view` y `/api/dns`, con el interruptor en cada posición. Con `TERMINUS_E2E_NETWORK_SKIP_DEV=1` corre solo el tramo empaquetado (8 de los 16 pasos) para aislar un runner inestable; el total esperado lo ajusta `expectedSteps()` en `scripts/e2e-suites.mjs`, que es también lo que compara el ejecutor, así que el recuento sigue cuadrando, y el log lo deja dicho con `OMITIDO desktop:dev`.
 
@@ -196,7 +201,7 @@ La prueba automatizada equivalente es `npm run test:e2e:installed`, que además 
 
 ## Arquitectura
 
-- `src/App.tsx`: estado de pestañas, sesión, historial global, modales y composición de la UI.
+- `src/App.tsx`: estado de pestañas, sesión, historial global, modales y composición de la UI; monta una superficie por pestaña web y deja la inactiva oculta pero viva.
 - `src/components/WebBrowserSurface.tsx`: navegador, barra de direcciones, zoom, búsqueda (incluido el campo de la pantalla de inicio), descargas y paneles.
 - `src/components/HeaderBar.tsx`: pestañas, herramientas y fila superior con el menú de configuración y los controles de ventana.
 - `src/components/SettingsMenu.tsx`: menú de configuración con audio (mute, sintetizador, WAV), apariencia (temas, B&W, CRT) y red y privacidad (excepción de destinos privados).
@@ -213,6 +218,7 @@ La prueba automatizada equivalente es `npm run test:e2e:installed`, que además 
 - `src/utils/serverSecurity.ts`: validación de red, cookies, sanitización y nombres de descarga.
 - `electron/main.cjs`: ventana Electron, PTY, shells nativos y archivos.
 - `electron/forwardProxy.cjs`: forward proxy de REAL con resolución DNS única, pinning de IP y túnel CONNECT.
+- `electron/downloads.cjs`: `will-download` de la sesión por defecto y de cada sesión de sitio, nombres seguros, progreso y carpeta forzada por `TERMINUS_DOWNLOAD_DIR`; lo pinta `src/components/DownloadsPanel.tsx`.
 - `electron/preload.cjs`: puente IPC con contexto aislado.
 
 ## Licencia

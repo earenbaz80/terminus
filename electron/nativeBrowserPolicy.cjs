@@ -17,6 +17,14 @@ const isWebUrl = (value) => {
   }
 };
 
+/**
+ * Un enlace con `target=_blank` (o `window.open`) va a pestaña nueva de la app
+ * cuando es web y no lo bloquea el adblock; los esquemas locales, `javascript:`
+ * y las ventanas emergentes de anuncios se rechazan.
+ */
+const shouldOpenInTab = (value, isBlockedUrl = () => false) =>
+  isWebUrl(value) && !isBlockedUrl(value);
+
 /** La ventana solo incrusta páginas en nuestras sesiones por sitio, nada más. */
 const isNativePartition = (value) =>
   typeof value === 'string' && value.startsWith(NATIVE_PARTITION_PREFIX);
@@ -38,6 +46,7 @@ const chromeUserAgent = () => {
 
 module.exports = {
   isWebUrl,
+  shouldOpenInTab,
   isNativePartition,
   chromeUserAgent,
   NATIVE_PARTITION_PREFIX,

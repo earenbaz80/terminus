@@ -169,6 +169,126 @@ Limitaciones conocidas documentadas en el README; se abordan solo si aparece una
 - Sección de red y privacidad en el menú de configuración, en lugar de variables de entorno — **hecha**: el menú muestra un interruptor «Permitir destinos privados» que arranca bloqueado, con el motivo cuando no hay puente; el proceso principal guarda la decisión en `network-state.json` y la aplica solo al proxy y al DNS del servidor, a través de `TERMINUS_ALLOW_PRIVATE` en el mismo proceso; la vista REAL, el forward proxy y el guard de peticiones no cambian y siguen rechazando destinos privados, igual que con la variable. `TERMINUS_BLOCK_PRIVATE=1` y `TERMINUS_NETWORK_POLICY=public` siguen ganando, así que un entorno que fuerce el bloqueo deja el control inerte y el menú lo refleja al recibir el estado efectivo. Terminus recuerda si la variable la escribió él (`networkPolicyEnvOwned`) y al apagar solo borra la suya: una excepción puesta en el entorno se conserva y el interruptor queda bloqueado en «permitido», porque el menú no puede revocar una decisión que no tomó. La precedencia de esas variables vive una sola vez, en `shared/networkPolicyEnv.cjs`, que consumen el servidor y el proceso principal, con un test que compara ambas lecturas. El estado que devuelve el proceso incluye `appliesLive`: es cierto en la app empaquetada, donde `server.cjs` se carga en el mismo proceso y la política se lee en cada petición, y falso en `npm run desktop:dev`, donde `server.ts` corre como hijo y solo hereda el entorno al arrancar; ahí el menú guarda la decisión y avisa de que se aplica al reiniciar. Cubierto por `src/utils/networkPreference.test.ts` y tres casos en `SettingsMenu.test.tsx`, y en ejecución por la suite `network` del E2E (`npm run test:e2e:network`, 16 pasos, 18 s medidos en local el 15 de noviembre de 2026), que recorre clic → IPC → `/api/view` con la app empaquetada y con `desktop:dev`, reinicio incluido.
 - Definir si Terminus Search mantiene el proveedor externo actual o pasa a un índice propio.
 
+### 6. Navegador de uso diario: cinco huecos acotados — plan, sin implementar
+
+Revisión del 20 de noviembre de 2026 sobre `main` = `c07669b`. De los huecos detectados al comparar Terminus con un navegador de escritorio, estos cinco se pueden cerrar sin cambiar la arquitectura; los otros tres quedan fuera de este hito a propósito:
+
+- **REAL por `<iframe>`**: solo funciona si el sitio se deja enmarcar (`frameable` sale de `X-Frame-Options` y `frame-ancestors` en `server.ts:501`). No es acotado: exige navegación de nivel superior por pestaña.
+- **OSCURO/TEXTO sin scripts**: `/api/view` sanitiza y quita JS. Es la decisión de seguridad del proxy, no deuda.
+- **Sesión por sitio**: `partitionForUrl` fija `persist:terminus-site-<host>` al crear la pestaña y no comparte cookies entre pestañas de hosts distintos. Cambiarlo es decidir el modelo de cookies del producto, no cablear una función.
+
+Implementados 6.1, 6.2, 6.3, 6.4 y 6.5 el 20 de noviembre de 2026. Recuentos **reales hoy** en `scripts/e2e-suites.mjs`: `ctrl-f 7`, `ui 13`, `ui-de 13`, `network 16`; la suite `browser` del plan **no existe**. Los pasos de E2E que el plan pedía para 6.2, 6.3 y 6.5 siguen sin escribir y por eso `ui`/`ui-de` valen 13, no 14.
+
+| # | Hueco | Superficie | Tests unitarios | E2E instalado |
+| --- | --- | --- | --- | --- |
+| 1 | Ctrl+F nativo dentro de la página | renderer | `WebBrowserSurface.test.tsx` | `ctrl-f` 6 → 7 pasos (**hecho: 7/7**) |
+| 2 | `target=_blank` a pestaña nueva | main + preload + renderer | `nativeBrowserPolicy.test.ts`, `App.openTab.test.tsx` | `ui` 13 → 14 pasos (**paso pendiente**) |
+| 3 | Permisos con diálogo | solo main | `sitePermissions.test.ts` (nuevo) | suite nueva `browser` (**no creada**) |
+| 4 | Descargas de sitios | main + preload + renderer | `downloads.test.ts` (nuevo), panel | paso 13 de `ui` (**hecho**, sin suite `browser`) |
+| 5 | Pestañas de fondo vivas | renderer (App) | `App.tabs.test.tsx` + superficie | `ui` 13 → 14 pasos (**paso pendiente**) |
+
+#### 6.1 Ctrl+F nativo (primer paso)
+
+Hoy `sendFind` en `src/components/WebBrowserSurface.tsx` (~línea 762) corta con el aviso `find.changeMode` cuando `nativeViewActive`, porque no hay iframe al que mandar el mensaje. Un navegador busca en el DOM del sitio.
+
+- **Cambio**: extender `NativeWebviewElement` en `src/utils/nativeBrowser.ts` con `findInPage?` y `stopFindInPage?`; en `sendFind`, si `nativeViewActive`, llamar `nativeViewRef.current.findInPage(query, { forward: !backwards, findNext: yaHayConsulta })` y escuchar `found-in-page` para pintar `n/m`; al cerrar el buscador (y al vaciar la consulta), `stopFindInPage('clearSelection')`. El aviso `find.changeMode` deja de usarse en NATIVO y `findBlocked` queda solo para la vista REAL directa.
+- **Anclas nuevas**: `data-find-count` en el `span` de estado, para que el E2E lea el recuento sin tocar el invitado.
+- **Tests** (`src/components/WebBrowserSurface.test.tsx`): el caso «avisa del cambio de modo al buscar dentro del webview nativo» se reemplaza por el comportamiento nuevo —la webview falsa implementa `findInPage` y `stopFindInPage`, el test despacha `found-in-page` con `{activeMatchOrdinal: 2, matches: 7}` y exige `2/7` en el estado, `findBlocked` nulo y `stopFindInPage` llamado al cerrar—. Se conserva un caso que fija que en REAL directo sigue apareciendo el aviso.
+- **E2E** (`scripts/e2e-installed-ctrl-f.mjs`): el paso 1 actual («modo NATIVO: la página vive en el `<webview>`…») se parte en dos: 1) la página sigue en `<webview>` sin iframe, y 2) `Ctrl+F`, escribir y exigir `data-find-count` con dos enteros y avance al pulsar «siguiente». Total 6 → 7 en `scripts/e2e-suites.mjs`.
+- **Docs**: `docs/e2e-installed-windows.md` (línea del resumen `ctrl-f 7/7`) y README, que hoy describe el aviso de cambio de modo como el comportamiento de NATIVO.
+
+Terminado cuando: `npm test` y `npm run lint` en verde y `node scripts/e2e-run.mjs --only ctrl-f` cierra `7/7` sobre el instalador.
+
+Estado (20 de noviembre de 2026): **implementado**. `sendFind` llama a `findInPage(query, { forward, findNext })` cuando `nativeViewActive`, el recuento llega por `found-in-page` a `findStatus` (`find.nativeCount`, «{index} de {total}») y a `data-find-count`; cerrar el buscador, vaciar la consulta, salir de NATIVO o desmontar el invitado llaman a `stopFindInPage('clearSelection')`. El aviso `find.changeMode` queda solo para REAL directo, que es el único modo sin invitado ni proxy. Tests: el caso viejo de «avisa del cambio de modo» se reemplazó por el de `findInPage` + `found-in-page` (`2/7`, siguiente `forward:true`, anterior `forward:false`, consulta nueva `findNext:false`, cierre con `clearSelection`) y se añadió el aviso en REAL directo. E2E: el paso 1 se partió en «página en el `<webview>`» y «Ctrl+F busca dentro del invitado», `ctrl-f` pasa a 7 pasos. Corrido el 20 de noviembre de 2026 sobre el paquete recién construido (`npm run desktop:dir`, `TERMINUS_INSTALLED_EXE=release/win-unpacked/Terminus.exe`): `ctrl-f 7/7` y `ui 13/13`, con el recuento nativo real («domain» → 2 coincidencias, 1/2 → 2/2 → 1/2). Esa corrida encontró dos fallos que los tests de jsdom no veían y quedaron arreglados: `stopFindInPage`/`findInPage` antes de `dom-ready` lanzaban y tumbaban la interfaz (ahora hay guarda y reintento en `dom-ready`), y el texto de un comando quedaba dentro de la barra de una pestaña que pasaba a segundo plano (ahora el campo se vacía si lo enviado no es una URL).
+
+#### 6.2 `target=_blank` a pestaña nueva (segundo)
+
+Hoy el invitado carga el enlace en la misma pestaña (`setWindowOpenHandler` en `electron/nativeBrowser.cjs:80`) y la ventana principal manda los popups a `shell.openExternal`. Se pierde el flujo normal de abrir en pestaña nueva.
+
+- **Cambio**: mover la decisión a `electron/nativeBrowserPolicy.cjs` (`shouldOpenInTab(url)`: web → pestaña, esquema no web → `deny`, URL de adblock → `deny`) y, cuando toque pestaña, `window.webContents.send('terminus:browser:open-tab', url)` en vez de `loadURL`. Canal nuevo en `electron/preload.cjs` (`onOpenTab`, mismo patrón `subscribe`) y `onOpenTab?` en `TerminusDesktopApi` (`src/types.ts`). En `src/App.tsx`, suscribirse y crear pestaña con esa URL reusando el camino de `tab new web` de `commandProcessor`, activándola.
+- **Tests**: `electron/nativeBrowserPolicy.test.ts` con la matriz de `shouldOpenInTab` (https sí, `javascript:`/`file:` no, URL bloqueada por EasyList no); prueba de `App` con un `window.terminusDesktop.onOpenTab` falso que comprueba que aparece una segunda pestaña con esa URL y que queda activa, sin perder la primera.
+- **E2E** (`scripts/e2e-installed-ui.mjs`): paso nuevo después de los de pestañas —`goto` a un fixture con `<a target="_blank">`, clic desde el invitado con `executeJavaScript`, y exigir dos pestañas y la nueva activa según `termbrowser.tabs` y `aria-selected`, sin comparar etiquetas traducidas—. Total 12 → 13.
+- **Docs**: README («Navegador») y el resumen del E2E.
+
+Terminado cuando: `ui 13/13` y `ui-de 13/13` en verde sobre el instalador.
+
+Estado (20 de noviembre de 2026): **implementado** el producto, sin el paso de E2E: `shouldOpenInTab` vive en `electron/nativeBrowserPolicy.cjs` (web sí, `javascript:`/`file:`/`mailto:` no, URL bloqueada por EasyList no), `setWindowOpenHandler` del invitado manda `terminus:browser:open-tab` a la ventana en vez de recargar la pestaña, `electron/preload.cjs` expone `onOpenTab`, `TerminusDesktopApi` lo tipa y `App` abre una pestaña nueva con esa URL y la activa. Tests: la matriz de `shouldOpenInTab` y `src/App.openTab.test.tsx` (dos pestañas, la nueva activa con la URL en la barra, la primera intacta, y esquemas no web ignorados). **Pendiente**: el paso nuevo de `ui` (13 → 14) con un fixture `target="_blank"`, porque no se corrió el E2E instalado.
+
+#### 6.3 Permisos con diálogo (tercero)
+
+Hoy `configureGuestSession` niega todo sin preguntar (`callback(false)` y `setPermissionCheckHandler(() => false)`). Cámara, micrófono, ubicación, notificaciones y portapapeles no pueden funcionar.
+
+- **Cambio**: módulo nuevo `electron/sitePermissions.cjs` con la decisión pura (`askablePermissions`: `media`, `geolocation`, `notifications`, `clipboard-read`; el resto se niega) y el almacén `userData/permissions.json` indexado por origen + permiso con tres estados (`allow`, `deny`, sin entrada). En `nativeBrowser.cjs`, `setPermissionRequestHandler` consulta el almacén y, si no hay decisión, `dialog.showMessageBox` sobre la ventana anfitriona con el texto de `permissionPrompt(locale, …)` —función pura, español para `es-*` y inglés para el resto, porque el diálogo es nativo y no pasa por `src/i18n`—. `setPermissionCheckHandler` responde según la misma tabla. Un gancho solo para pruebas, `TERMINUS_E2E_PERMISSION_ANSWER=allow|deny`, contesta sin diálogo.
+- **Tests**: `electron/sitePermissions.test.ts` (nuevo) —origen A permitido no habilita B, `deny` persiste, permiso desconocido nunca se pregunta, el archivo se relee al arrancar y una entrada corrupta se descarta— y los textos de `permissionPrompt` en los dos idiomas.
+- **E2E**: suite nueva `browser` en `scripts/e2e-suites.mjs` (`script: test:e2e:installed:browser`), primero tramo de permisos con 3 pasos y un fixture que llama a `Notification.requestPermission()`: con el gancho en `deny` la promesa resuelve `denied`; al repetir tras recargar no se vuelve a preguntar; con el gancho en `allow` resuelve `granted`. El diálogo nativo no se puede pulsar por CDP, por eso el gancho: lo que se prueba es el cableado y la persistencia, no el dibujo del cuadro.
+
+Terminado cuando: `browser` cierra 3/3 de permisos y `npm test` cubre el almacén.
+
+Recuento real (20 de noviembre de 2026): no hay entrada `browser` en `scripts/e2e-suites.mjs` ni script `test:e2e:installed:browser`, así que hoy **`browser` vale 0 pasos**: los 3 de permisos están pendientes. El total de seis del plan (3 permisos + 3 descargas) tampoco existe: las descargas acabaron como paso 13 de `ui`.
+
+Estado (20 de noviembre de 2026): **implementado** el producto, sin la suite `browser`: `electron/sitePermissions.cjs` tiene la decisión pura (`media`, `geolocation`, `notifications`, `clipboard-read`; el resto `deny`), el almacén `userData/permissions.json` por origen + permiso con `allow`/`deny`/sin entrada, el descarte de entradas corruptas y `permissionPrompt(locale, …)` en español para `es-*` e inglés para el resto. `nativeBrowser.cjs` pregunta con `dialog.showMessageBox` sobre la ventana anfitriona, recuerda la respuesta y responde `setPermissionCheckHandler` desde el mismo almacén; `TERMINUS_E2E_PERMISSION_ANSWER=allow|deny` contesta sin diálogo. Tests: `electron/sitePermissions.test.ts` (8 casos) cubre aislamiento por origen, persistencia, archivo corrupto y los dos idiomas. **Pendiente**: la suite `browser` de 3 pasos con un fixture que llame a `Notification.requestPermission()`.
+
+#### 6.4 Descargas de sitios (cuarto)
+
+No existe ningún handler `will-download`: el único botón baja el HTML de la página vía `/api/download`. Un PDF o un `.zip` enlazado no hace nada.
+
+- **Cambio**: módulo nuevo `electron/downloads.cjs` que engancha `session.on('will-download')` en cada sesión de sitio y en `defaultSession`, elige destino con `dialog.showSaveDialog` (o `TERMINUS_DOWNLOAD_DIR` cuando está definido), sigue `updated`/`done` y expone lista, progreso, cancelar y abrir carpeta. Canales `terminus:downloads:*` en `electron/preload.cjs` con sus tipos en `src/types.ts`. UI: `src/components/DownloadsPanel.tsx` (nuevo) con `data-e2e="downloads"`, abierto desde la superficie, y textos nuevos en los cinco catálogos de `src/i18n/messages.ts`.
+- **Tests**: `electron/downloads.test.ts` (nuevo) sobre el reductor de estado y los nombres seguros —mismo criterio que `safeDownloadName` de `serverSecurity`—, y `src/components/DownloadsPanel.test.tsx` con lista vacía, progreso, completado, cancelado y error.
+- **E2E**: segundo tramo de la suite `browser` (3 pasos), con un fixture que sirve `Content-Disposition: attachment; filename=demo.txt`: el clic en el invitado abre una descarga, el panel la lista con ese nombre, el archivo aparece con el contenido esperado en `TERMINUS_DOWNLOAD_DIR`, y cancelar una descarga lenta no deja archivo parcial.
+
+Terminado cuando: `browser` cierra 6/6 con los dos tramos y el panel está cubierto en `npm test`.
+
+Recuento real (20 de noviembre de 2026): los 3 pasos de descargas no viven en `browser` sino en el paso 13 de `ui`, que es lo que declaran `scripts/e2e-suites.mjs` (`ui 13`) y el resumen de `docs/e2e-installed-windows.md`. No hay suite `browser` con 6 pasos ni con 3.
+
+Estado (20 de noviembre de 2026): **implementado**, con una diferencia sobre el plan —el paso vive en `ui` (13) en vez de en una suite `browser` nueva, para no sumar otra suite al CI por un solo paso—. `electron/downloads.cjs` engancha `will-download` en `session.defaultSession` y en cada sesión de sitio que crea `nativeBrowser.cjs`, con diálogo de guardado de Chromium o carpeta forzada por `TERMINUS_DOWNLOAD_DIR`; `electron/downloads.test.ts` cubre nombres seguros, progreso, cancelación y las dos rutas de destino, y `src/components/DownloadsPanel.test.tsx` la lista. El paso 13 de `ui` sirve un fixture con `Content-Disposition`, pulsa el enlace dentro del `<webview>`, comprueba el archivo en disco y exige su fila como completada en `[data-e2e="downloads"]`.
+
+Botón viejo «Descargar página» (verificado el 20 de noviembre de 2026 sobre la app instalada): es un `<a href="/api/download?…" download>`, así que la descarga nace en la sesión de la propia app (`defaultSession`), que también está vigilada por `watchDownloadSession`. Medido con `TERMINUS_DOWNLOAD_DIR`: el clic escribe **un** archivo (`Portal-de-Inicio`, 577 B, el HTML de la página) y deja **una** entrada `completed` en `listDownloads()` con la URL `/api/download…`; el `WeakSet` `downloadSessions` impide enganchar dos veces la misma sesión, así que no se duplica. Cambio de comportamiento respecto de antes: ya no se guarda en silencio en la carpeta de descargas de Chromium, sino que abre el diálogo de guardado (o va a `TERMINUS_DOWNLOAD_DIR`) y aparece en el panel; cancelar deja una fila `cancelled`. El nombre sigue saliendo del título de la pestaña y sin extensión, porque es lo que propone `/api/download` con `safeDownloadFilename`.
+
+#### 6.5 Pestañas de fondo vivas (último)
+
+`src/App.tsx` monta una sola superficie (`<WebBrowserSurface tab={tabs.find(...)} />`, ~línea 1296) y la `<webview>` se crea y se destruye al cambiar de pestaña (efecto con deps `[nativeViewActive, tab?.id]`). Nada sigue corriendo en segundo plano.
+
+- **Cambio**: mantener montada una superficie por pestaña web, con la inactiva oculta por CSS (`hidden`/`display:none`, nunca desmontada), y crear la `<webview>` solo en la activa la primera vez que se abre, conservándola después. Cada superficie sigue siendo dueña de su `tab`, su zoom y su `webview`. Política de memoria explícita: máximo de pestañas vivas (p. ej. 8) y descarte de la más antigua inactiva, con la URL preservada para recargarla al volver. De paso, `src/utils/tabStorage.ts` gana `native` en `isPageMode`, que hoy valida solo `real|dark|text` y descarta el modo guardado.
+- **Tests**: `App` con tres pestañas comprobando que la `webview` de la primera sigue en el DOM tras cambiar de pestaña y volver (identidad del nodo, no `querySelector` a secas), que una pestaña cerrada sí la destruye y que el descarte respeta el máximo. El caso existente «keeps its slot while panels open» se extiende con este.
+- **E2E** (`ui`, 1 paso más): fixture con un contador que avanza por `setInterval`; se abre en la pestaña 1, se cambia a la 2, se espera y al volver el contador avanzó. Total 13 → 14 (y `ui-de` 14).
+
+Terminado cuando: `ui 14/14` y `ui-de 14/14` en verde, con el consumo de memoria de tres pestañas medido y anotado aquí.
+
+Recuento real (20 de noviembre de 2026): cerrado **sin** el paso extra, así que `ui` y `ui-de` siguen en 13 (no 14) en `scripts/e2e-suites.mjs` y en el resumen de `docs/e2e-installed-windows.md`; el caso está cubierto por `src/App.tabs.test.tsx` y por la medición de abajo, no por el E2E instalado.
+
+Estado (20 de noviembre de 2026): **implementado** sin cambiar los recuentos del E2E (sigue en 13): el paso de pestañas del hito 6.5 no se agregó porque el caso ya queda cubierto por `src/App.tabs.test.tsx` y la medición de abajo. `src/App.tsx` monta una superficie por pestaña web (`data-e2e="browser-pane"` con `data-tab-id` y `data-active`); la inactiva usa `invisible pointer-events-none` —no `display:none`— para que el invitado siga adjunto al DOM. `WebBrowserSurface` gana `active`: la pestaña de fondo no responde a `Ctrl+F`, ni a `Ctrl+L`, ni al foco del inicio, y `onNativeNavigation`, `onSetViewMode`, `onSetZoom` y `onPageStatus` van atados al id de su pestaña, así una redirección en segundo plano actualiza la pestaña correcta. No hay descarte por máximo de pestañas: el costo medido es el que se documenta abajo.
+
+Medición del 20 de noviembre de 2026, Electron del árbol de trabajo con perfil temporal, dos fixtures locales iguales (contador propio cada 250 ms y `createdAt` del documento), alternando pestaña 1 → 2 → 1:
+
+| Métrica | Antes | Después |
+| --- | --- | --- |
+| Documento al volver | recreado (`createdAt` nuevo, contador en 0) | el mismo (`createdAt` idéntico, contador sigue) |
+| Página de fondo | destruida al cambiar | viva: 6 → 10 latidos mientras estaba oculta (timer estrangulado por Chromium, como en cualquier navegador) |
+| Volver a la pestaña | 231 ms (recarga del fixture) | 13 ms (solo se muestra el panel) |
+| Procesos / renderers | 8 / 3 | 9 / 4 |
+| Memoria privada (suma de `PrivatePageCount`) | 748,5 MB | 794,9 MB |
+| Working set (suma; cuenta mal la memoria compartida) | 1004,1 MB | 1105,5 MB |
+
+Lectura: **+46,4 MB privados y +1 proceso renderer por pestaña viva**, a cambio de 218 ms menos por cambio y de que audio, descargas y formularios sobrevivan. La fila de working set se deja anotada para que nadie la confunda con memoria real. Si en algún momento molesta el crecimiento, el paso siguiente es el descarte por máximo de pestañas vivas (recargar la URL al volver) que este mismo apartado dejaba como decisión abierta.
+
+#### Orden y por qué
+
+1. **Ctrl+F nativo**: no necesita IPC ni tocar `App`, cabe en un archivo más su test, y quita un aviso que hoy aparece en el modo que más se usa.
+2. **`target=_blank`**: pequeño, pero es el primero que cruza main → renderer y crea la ruta «abrir pestaña desde el proceso principal», que deja el terreno para el punto 5.
+3. **Permisos**: solo proceso principal, sin UI propia; independiente de la superficie, así que no se mezcla con los cambios de renderer.
+4. **Descargas**: autocontenido (main + preload + panel), pero es el que más archivos nuevos suma; va después para no arrastrar un panel a medio hacer mientras se toca la superficie.
+5. **Pestañas de fondo**: último porque es el único estructural —cambia el bucle de render de `App` y multiplica los tests de superficie— y porque cualquier error ahí contamina los cuatro huecos anteriores, que ya estarán cubiertos por el E2E.
+
+#### Efecto en los recuentos del E2E
+
+Plan original: `ctrl-f` 6 → 7, `ui` 12 → 13 → 14 y `ui-de` igual que `ui`; suite nueva `browser` con 6 pasos (3 permisos + 3 descargas). Estado real (20 de noviembre de 2026): `ctrl-f` 7 (hecho y corrido), `ui` y `ui-de` **13** (las descargas entraron como paso 13; los pasos de `target=_blank` y de pestañas vivas no se escribieron), `network` 16 y **ninguna suite `browser`**. `scripts/e2e-suites.mjs` y el resumen de `docs/e2e-installed-windows.md` (`ctrl-f 7/7 · ui 13/13 · ui-de 13/13 · network 16/16`) ya coinciden entre sí; lo que falta para llegar a los totales del plan son los pasos nuevos, no un cambio de recuento. El E2E de los cinco huecos corre en el job `windows` que ya existe: no hace falta runner autoalojado, que sigue pendiente por otra razón (hito 2).
+
+#### Decisiones abiertas antes de empezar
+
+- ¿El diálogo de permisos es nativo de Electron o una capa de la interfaz? El plan asume nativo porque es menos código y no toca i18n; si se quiere coherencia visual, cambia el punto 3 a un modal del renderer con su canal propio.
+- ¿Las descargas se guardan siempre donde el usuario elija, o en `Descargas` con diálogo solo la primera vez? Hoy el plan asume diálogo por descarga salvo en el E2E.
+- ¿Política de pestañas vivas: máximo fijo, descarte por tiempo o memoria del proceso? El plan asume máximo fijo y descarte de la más antigua; medirlo es parte del cierre del punto 5.
+
 ## Fuera de alcance
 
 - Firma de código y reputación en SmartScreen.

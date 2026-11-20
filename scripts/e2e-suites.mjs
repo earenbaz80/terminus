@@ -33,21 +33,21 @@ export const E2E_SUITES = [
     script: 'test:e2e:installed',
     log: 'e2e-installed.log',
     locale: '',
-    steps: 6,
+    steps: 7,
   },
   {
     label: 'ui',
     script: 'test:e2e:installed:ui',
     log: 'e2e-installed-ui.log',
     locale: '',
-    steps: 12,
+    steps: 13,
   },
   {
     label: 'ui-de',
     script: 'test:e2e:installed:ui',
     log: 'e2e-installed-ui-de.log',
     locale: 'de',
-    steps: 12,
+    steps: 13,
   },
   // No usa el instalador: el build de `release/win-unpacked` y el árbol de trabajo.
   {

@@ -18,6 +18,11 @@ const {
 const { startForwardProxy } = require('./forwardProxy.cjs');
 const { registerNativeGuests, listNativeSessions } = require('./nativeBrowser.cjs');
 const { isWebUrl, isNativePartition } = require('./nativeBrowserPolicy.cjs');
+const {
+  DOWNLOAD_DIR_ENV,
+  attachDownloadHandler,
+  createDownloadStore,
+} = require('./downloads.cjs');
 const { execFileSync, spawn } = require('node:child_process');
 const dns = require('node:dns').promises;
 const fs = require('node:fs');
@@ -30,6 +35,7 @@ const APP_ORIGIN_FALLBACK = 'http://127.0.0.1';
 const MAXIMIZED_CHANGED_CHANNEL = 'terminus:window:maximized-changed';
 const FRAME_CONTEXT_MENU_CHANNEL = 'terminus:context-menu:frame';
 const FIND_SHORTCUT_CHANNEL = 'terminus:find:shortcut';
+const DOWNLOADS_CHANNEL = 'terminus:downloads:update';
 const PTY_DATA_CHANNEL = 'terminus:pty:data';
 const PTY_EXIT_CHANNEL = 'terminus:pty:exit';
 const DEFAULT_SHELL_TIMEOUT_MS = 120000;
@@ -42,6 +48,42 @@ const SHELL_IDS = new Set(['auto', 'cmd', 'powershell', 'bash']);
 const ADBLOCK_CACHE_FILENAME = 'adblock-engine.bin';
 let adblockBlocker = null;
 let adblockInitialization = null;
+
+// Descargas: una lista corta por ventana, alimentada por el `will-download` de la
+// sesión por defecto y de cada sesión de sitio del navegador nativo. La carpeta
+// forzada existe para el E2E y para quien no quiera diálogo en cada descarga.
+const downloadStore = createDownloadStore();
+const downloadSessions = new WeakSet();
+
+const forcedDownloadDir = () => {
+  const value = String(process.env[DOWNLOAD_DIR_ENV] || '').trim();
+  return value ? path.resolve(value) : '';
+};
+
+function notifyDownloads() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(DOWNLOADS_CHANNEL, { downloads: downloadStore.list() });
+}
+
+function watchDownloadSession(targetSession) {
+  if (!targetSession || downloadSessions.has(targetSession)) return;
+  downloadSessions.add(targetSession);
+  const directory = forcedDownloadDir();
+  if (directory) {
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+    } catch {
+      // Sin la carpeta el diálogo de guardado sigue disponible.
+    }
+  }
+  attachDownloadHandler({
+    session: targetSession,
+    store: downloadStore,
+    notify: notifyDownloads,
+    downloadDir: directory || null,
+    saveDialogTitle: 'Guardar descarga',
+  });
+}
 
 // The user owns this switch from the settings menu; the env var still wins so a
 // deliberately started instance can ignore the stored preference.
@@ -1516,7 +1558,11 @@ async function createArchiveRequest(owner, request) {
 function registerWindowIpc() {
   registerNativeGuests({
     getWindow: () => mainWindow,
+    // Un enlace bloqueado por EasyList no merece una pestaña nueva.
+    isBlocked: (url) => adblockEnabled && isBlockedAdUrl(url),
     onSessionCreated: (siteSession) => {
+      // Cada sesión de sitio descarga con el mismo diálogo y la misma lista.
+      watchDownloadSession(siteSession);
       if (!adblockEnabled) return undefined;
       if (adblockBlocker) {
         enableNetworkBlockingInSession(siteSession, adblockBlocker);
@@ -1639,6 +1685,27 @@ function registerWindowIpc() {
       console.warn('[Terminus] No se pudo aplicar el bloqueo de publicidad.', error);
     }
     return { enabled: adblockEnabled, available: true };
+  });
+
+  ipcMain.handle('terminus:downloads:list', (event) =>
+    windowForEvent(event) ? downloadStore.list() : []
+  );
+
+  ipcMain.handle('terminus:downloads:cancel', (event, id) => {
+    if (!windowForEvent(event)) return false;
+    return downloadStore.cancel(String(id || ''));
+  });
+
+  ipcMain.handle('terminus:downloads:show', (event, id) => {
+    if (!windowForEvent(event)) return false;
+    const item = downloadStore.find(String(id || ''));
+    if (!item?.savePath) return false;
+    try {
+      shell.showItemInFolder(item.savePath);
+      return true;
+    } catch {
+      return false;
+    }
   });
 
   ipcMain.handle('terminus:updates:state', (event) =>
@@ -1915,6 +1982,9 @@ async function configureRealNetworkProxy(appUrl, proxyPort) {
 function createWindow(appUrl) {
   const appOrigin = new URL(appUrl).origin || APP_ORIGIN_FALLBACK;
   configureSessionPermissions(appOrigin);
+  // La sesión de la app también descarga: un enlace con `Content-Disposition`
+  // abierto aquí tiene que caer en la misma lista que los del navegador nativo.
+  watchDownloadSession(session.defaultSession);
   configureNetworkGuard(appOrigin);
 
   mainWindow = new BrowserWindow({
