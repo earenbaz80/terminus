@@ -8,6 +8,7 @@ import { LOCALES } from '../i18n/locales';
 import { useI18n } from '../i18n';
 import { LockSettings } from './LockSettings';
 import { applyAdblockEnabled, readAdblockState, AdblockState } from '../utils/adblockPreference';
+import { isPrivateMode, setPrivateMode } from '../utils/privacyMode';
 import {
   applyAllowPrivateNetworks,
   readNetworkState,
@@ -56,6 +57,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
   const [open, setOpen] = useState(false);
   const [soundTheme, setSoundTheme] = useState<SoundTheme>(() => soundEffects.getSoundTheme());
   const [customWavName, setCustomWavName] = useState<string | null>(() => soundEffects.getCustomSoundName());
+  const [privateMode, setPrivateModeState] = useState<boolean>(() => isPrivateMode());
   const [adblock, setAdblock] = useState<AdblockState>({ enabled: true, available: false });
   const [adblockBusy, setAdblockBusy] = useState(false);
   const [network, setNetwork] = useState<NetworkState>({
@@ -243,6 +245,26 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
                   </option>
                 ))}
               </select>
+            </section>
+
+            <section aria-label={t('settings.privateMode')} className="mb-3 border-t pt-2" style={{ borderColor: theme.border }}>
+              {sectionTitle(t('settings.privateMode'))}
+              <button
+                type="button"
+                onClick={() => {
+                  soundEffects.playKeyClick();
+                  setPrivateModeState(setPrivateMode(!privateMode));
+                }}
+                aria-pressed={privateMode}
+                className="flex w-full items-center justify-between border px-2 py-1.5 cursor-pointer hover:bg-white/5"
+                style={{ borderColor: privateMode ? theme.accent : theme.border }}
+              >
+                <span>{t('settings.privateMode')}</span>
+                <span className="font-bold" style={{ color: privateMode ? theme.accent : theme.text }}>
+                  {privateMode ? t('settings.privateModeOn') : t('settings.privateModeOff')}
+                </span>
+              </button>
+              <p className="mt-1 text-[9px] leading-4 opacity-55">{t('settings.privateModeHint')}</p>
             </section>
 
             <section aria-label={t('settings.audio')} className="mb-3 border-t pt-2" style={{ borderColor: theme.border }}>

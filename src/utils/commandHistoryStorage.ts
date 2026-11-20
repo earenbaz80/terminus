@@ -2,6 +2,8 @@
  * Terminus - Persistent Command History Manager (localStorage)
  */
 
+import { isPrivateMode } from './privacyMode';
+
 export const HISTORY_STORAGE_KEY = 'termbrowser_cmd_history_v1';
 export const HISTORY_SYNC_EVENT = 'termbrowser-history-sync';
 const MAX_HISTORY_ENTRIES = 250;
@@ -45,6 +47,9 @@ export function getPersistedCommandHistory(): string[] {
 export function appendCommandToHistory(rawCmd: string): string[] {
   const cmd = rawCmd.trim();
   if (!cmd) return getPersistedCommandHistory();
+
+  // En navegación privada no se persiste ningún comando.
+  if (isPrivateMode()) return getPersistedCommandHistory();
 
   // Do not re-add history clearing commands after clearing
   const lower = cmd.toLowerCase();

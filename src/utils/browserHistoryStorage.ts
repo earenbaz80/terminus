@@ -5,6 +5,8 @@
  * by the address bar across tabs and sessions, kept small and deduplicated.
  */
 
+import { isPrivateMode } from './privacyMode';
+
 export const BROWSER_HISTORY_STORAGE_KEY = 'termbrowser.browser-history.v1';
 export const BROWSER_HISTORY_SYNC_EVENT = 'termbrowser-browser-history-sync';
 const MAX_BROWSER_HISTORY_ENTRIES = 200;
@@ -52,6 +54,8 @@ export function recordBrowserHistory(
   pages: { url: string; title?: string }[]
 ): BrowserHistoryEntry[] {
   const current = loadBrowserHistory();
+  // En navegación privada la sesión funciona igual, pero no deja rastro.
+  if (isPrivateMode()) return current;
   const byUrl = new Map(current.map((entry) => [entry.url, entry]));
   const now = Date.now();
 
