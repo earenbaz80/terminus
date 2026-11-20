@@ -245,15 +245,25 @@ export async function captureFailureScreenshot(client, label = 'e2e') {
 /**
  * Lanza el ejecutable instalado con perfil temporal y devuelve su cliente CDP.
  * `cleanup()` cierra el CDP, mata el proceso y borra el perfil.
+ *
+ * Con `profileDir` se relanza sobre un perfil que ya existe (para volver a arrancar
+ * con otra variable de entorno y el mismo estado guardado); en ese caso el perfil lo
+ * borra quien lo creó, no `cleanup()`.
  */
-export async function launchInstalledApp({ exe, env = {}, profilePrefix = 'terminus-e2e-' }) {
+export async function launchInstalledApp({
+  exe,
+  env = {},
+  profilePrefix = 'terminus-e2e-',
+  profileDir = '',
+}) {
   const cdpPort = await getFreePort();
-  const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), profilePrefix));
+  const ownsProfile = !profileDir;
+  const resolvedProfile = profileDir || fs.mkdtempSync(path.join(os.tmpdir(), profilePrefix));
   let appLogs = '';
 
   const appProcess = spawn(
     exe,
-    [`--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profileDir}`],
+    [`--remote-debugging-port=${cdpPort}`, `--user-data-dir=${resolvedProfile}`],
     {
       env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -290,16 +300,25 @@ export async function launchInstalledApp({ exe, env = {}, profilePrefix = 'termi
 
   const cleanup = async () => {
     await stop();
+    if (!ownsProfile) return;
     try {
-      fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      fs.rmSync(resolvedProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     } catch (error) {
       console.warn(
-        `No se pudo borrar el perfil temporal ${profileDir}: ${
+        `No se pudo borrar el perfil temporal ${resolvedProfile}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
     }
   };
 
-  return { process: appProcess, pid: appProcess.pid, client, logs, stop, cleanup };
+  return {
+    process: appProcess,
+    pid: appProcess.pid,
+    profileDir: resolvedProfile,
+    client,
+    logs,
+    stop,
+    cleanup,
+  };
 }
