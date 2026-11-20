@@ -148,6 +148,7 @@ const COMMON_COMMANDS = [
   'voice',
   'voz',
   'dictar',
+  'dosy',
   'exit',
   'fs workspace',
   'fs mount',

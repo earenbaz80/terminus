@@ -75,6 +75,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ theme, x, y, title, it
         ref={menuRef}
         role="menu"
         aria-label={title}
+        data-testid="web-context-menu"
         className="context-menu-pop fixed z-[101] overflow-hidden border font-mono text-[11px] shadow-[0_12px_32px_rgba(0,0,0,0.55)]"
         style={{
           left,

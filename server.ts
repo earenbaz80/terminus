@@ -344,6 +344,9 @@ async function startServer() {
         headers: {
           'User-Agent': `Terminus/${APP_VERSION} (CLI Web Navigator; local browser)`,
           'Accept': 'text/html,application/xhtml+xml,application/xml,text/plain,application/json;q=0.9,*/*;q=0.8',
+          // Privacidad: el proxy declara que no se rastree al usuario.
+          'DNT': '1',
+          'Sec-GPC': '1',
         },
         signal: AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS),
       });
@@ -487,6 +490,8 @@ async function startServer() {
         headers: {
           'User-Agent': `Mozilla/5.0 (compatible; Terminus/${APP_VERSION})`,
           'Accept': 'image/avif,image/webp,image/*,*/*;q=0.8',
+          'DNT': '1',
+          'Sec-GPC': '1',
           ...(referer ? { Referer: referer } : {}),
         },
         signal: AbortSignal.timeout(15000),
@@ -533,6 +538,8 @@ async function startServer() {
         headers: {
           'User-Agent': `Mozilla/5.0 (compatible; Terminus/${APP_VERSION})`,
           Accept: 'text/html,application/xhtml+xml,application/octet-stream,*/*;q=0.8',
+          'DNT': '1',
+          'Sec-GPC': '1',
         },
         signal: AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS),
       });
@@ -800,9 +807,9 @@ async function startServer() {
       }
 
       return res.json({
-        query,
+        query: originalQuery,
         count: results.length,
-        provider: 'DuckDuckGo + Wikipedia',
+        provider: webResultCount > 0 ? 'DuckDuckGo' : 'Wikipedia',
         results,
         images: images.slice(0, 8),
         timestamp: new Date().toISOString(),

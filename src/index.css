@@ -732,3 +732,19 @@ button:not(:disabled):not([aria-disabled='true']):active {
     display: none;
   }
 }
+
+/* Transición suave al cambiar entre superficie web y terminal o entre pestañas */
+@keyframes tb-view-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+
+main > * {
+  animation: tb-view-in 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main > * {
+    animation: none;
+  }
+}
