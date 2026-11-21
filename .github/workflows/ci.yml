@@ -458,6 +458,9 @@ jobs:
             artifacts/e2e/e2e-installed-ui-de.log
             artifacts/e2e/e2e-installed-browser.log
             artifacts/e2e/*.png
+            # `e2e-run.mjs` copia el log de las suites que fallaron a
+            # `failure-<suite>-<sello>.log`; sin este patrón la copia se perdía.
+            artifacts/e2e/failure-*.log
           # El E2E instalado es opcional: sin log no hay nada que subir y no debe avisar.
           if-no-files-found: ignore
 

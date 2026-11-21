@@ -15,6 +15,29 @@ import { E2E_SUITES, expectedSteps } from '../e2e-suites.mjs';
 /** Última línea «STEPS: n/m» del log; la primera puede venir de una ejecución previa. */
 export const STEPS_PATTERN = /STEPS: (\d+)\/(\d+)/g;
 
+/** Línea donde la suite cuenta qué paso falló, para no dejar el check mudo. */
+export const FAILURE_LINE_PATTERN = /^.*\bFAIL\b.*$/gm;
+
+/**
+ * Última línea de fallo del log, recortada a una anotación legible.
+ *
+ * Sin esto el check solo dice «declara 0/5 pasos» y la causa —el paso y su
+ * mensaje— queda enterrada en el log del job, que en un PR no se lee.
+ */
+export function lastFailureLine(text) {
+  FAILURE_LINE_PATTERN.lastIndex = 0;
+  const matches = [...String(text).matchAll(FAILURE_LINE_PATTERN)];
+  if (!matches.length) return '';
+  const line = matches[matches.length - 1][0].replace(/\s+/g, ' ').trim();
+  return line.length > 300 ? `${line.slice(0, 297)}…` : line;
+}
+
+/** Mensaje del problema, con la última línea de fallo cuando la hay. */
+const problemMessage = (text, base) => {
+  const detail = lastFailureLine(text);
+  return detail ? `${base} Último fallo del log: ${detail}` : base;
+};
+
 /** Resume las suites leyendo su log con `readLog(suite)`. */
 export function summarizeSuites(suites, readLog) {
   const problems = [];
@@ -29,7 +52,7 @@ export function summarizeSuites(suites, readLog) {
     if (!match) {
       problems.push({
         log: suite.log,
-        message: `${suite.log} no informó de los pasos ejecutados.`,
+        message: problemMessage(text, `${suite.log} no informó de los pasos ejecutados.`),
       });
       reports.push(`${suite.label} sin recuento`);
       continue;
@@ -41,7 +64,10 @@ export function summarizeSuites(suites, readLog) {
     if (counts !== `${expected}/${expected}`) {
       problems.push({
         log: suite.log,
-        message: `${suite.log} declara ${counts} pasos; se esperaban ${expected}/${expected}.`,
+        message: problemMessage(
+          text,
+          `${suite.log} declara ${counts} pasos; se esperaban ${expected}/${expected}.`,
+        ),
       });
     }
     reports.push(`${suite.label} ${counts}`);

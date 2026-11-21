@@ -2,16 +2,22 @@
 /**
  * Suite `browser` del E2E instalado: permisos por origen.
  *
- * Tres pasos sobre un fixture local que llama a `Notification.requestPermission()`:
+ * Cinco pasos sobre un fixture local que pide notificaciones, ubicación y cámara:
  *
- *   1. con `TERMINUS_E2E_PERMISSION_ANSWER=deny` la promesa resuelve «denied» y la
- *      respuesta queda guardada en `permissions.json`, igual que si se hubiera
- *      pulsado el diálogo nativo;
+ *   1. con `TERMINUS_E2E_PERMISSION_ANSWER=deny` la promesa de notificaciones resuelve
+ *      «denied» y la respuesta queda guardada en `permissions.json`, igual que si se
+ *      hubiera pulsado el diálogo nativo;
  *   2. al recargar —proceso nuevo, mismo perfil y sin gancho— ya no se pregunta:
  *      `Notification.permission` es «denied» antes de pedir y la petición vuelve a
  *      resolver «denied» sin que aparezca el cuadro nativo, que colgaría la promesa
  *      porque CDP no puede pulsarlo;
- *   3. con el gancho en `allow`, sobre esa misma decisión guardada, resuelve «granted».
+ *   3. con el gancho en `allow`, sobre esa misma decisión guardada, resuelve «granted»;
+ *   4. con `TERMINUS_E2E_GEO_ANSWER=allow` la ubicación queda concedida para el
+ *      origen. La posición puede faltar (un runner no tiene proveedor), pero el
+ *      permiso es lo que mide esta suite;
+ *   5. con `TERMINUS_E2E_CAM_ANSWER=allow` `getUserMedia` entrega una pista de video;
+ *      la app arranca con un dispositivo falso de Chromium para que el runner, que
+ *      no tiene cámara, pueda ejecutar el camino real.
  *
  * El perfil se conserva entre los tres arranques: lo que se mide es la persistencia
  * del almacén por origen, no solo el cableado del canal.
@@ -40,6 +46,8 @@ const installedExe = resolvedExe({ fallbackToLocalAppData: true }) || path.join(
 
 // Cada pestaña web monta su superficie: el invitado y la barra que interesan son los
 // del panel visible, no los primeros del documento.
+import { typeInAddressBar } from './lib/e2e-address-bar.mjs';
+
 const ACTIVE_PANE = '[data-e2e="browser-pane"][data-active="true"]';
 const ADDRESS_SELECTOR = `${ACTIVE_PANE} input[aria-controls="terminus-address-suggestions"]`;
 const GUEST_SELECTOR = `${ACTIVE_PANE} webview`;
@@ -58,12 +66,19 @@ const GUEST_STATE_EXPRESSION = `(() => {
 
 // El clic se manda con eventos de ratón del invitado: un `click()` por
 // `executeJavaScript` no lleva gesto de usuario y Chromium lo descarta.
-const PERMISSION_CLICK_SCRIPT =
-  '(() => { const button = document.getElementById("permiso"); if (!button) return null; ' +
-  'const box = button.getBoundingClientRect(); const x = Math.round(box.left + box.width / 2); ' +
-  'const y = Math.round(box.top + box.height / 2); ' +
-  'const hit = document.elementFromPoint(x, y); ' +
-  'return { x, y, hit: hit?.id || hit?.tagName || null }; })()';
+const fixtureClickScript = (id) =>
+  `(() => { const button = document.getElementById(${JSON.stringify(id)}); if (!button) return null; ` +
+  `const box = button.getBoundingClientRect(); const x = Math.round(box.left + box.width / 2); ` +
+  `const y = Math.round(box.top + box.height / 2); ` +
+  `const hit = document.elementFromPoint(x, y); ` +
+  `return { x, y, hit: hit?.id || hit?.tagName || null }; })()`;
+
+/** Punto donde caería el clic sobre un botón del fixture, leído dentro del invitado. */
+const fixtureClickPoint = (id) => `(() => {
+  const view = document.querySelector(${JSON.stringify(GUEST_SELECTOR)});
+  if (!view || typeof view.executeJavaScript !== 'function') return Promise.resolve(null);
+  return Promise.resolve(view.executeJavaScript(${JSON.stringify(fixtureClickScript(id))}, true));
+})()`;
 
 /** Fixture local: un botón que pide permiso de notificaciones y guarda la respuesta. */
 function startPermissionFixture() {
@@ -80,18 +95,67 @@ function startPermissionFixture() {
     <title>Terminus E2E permisos</title>
     <style>
       body { margin: 0; font-family: system-ui, sans-serif; }
-      #permiso { position: absolute; top: 16px; left: 16px; width: 220px; height: 40px; }
+      button { position: absolute; left: 16px; width: 220px; height: 40px; }
+      #permiso { top: 16px; }
+      #geo { top: 64px; }
+      #cam { top: 112px; }
+      p { position: absolute; left: 16px; margin: 0; }
+      #resultado { top: 152px; }
+      #resultado-geo { top: 176px; }
+      #resultado-cam { top: 200px; }
     </style>
   </head>
   <body>
     <button id="permiso" type="button">Pedir notificaciones</button>
+    <button id="geo" type="button">Pedir ubicacion</button>
+    <button id="cam" type="button">Pedir camara</button>
     <p id="resultado"></p>
+    <p id="resultado-geo"></p>
+    <p id="resultado-cam"></p>
     <script>
       window.__permiso = null;
+      window.__geo = null;
+      window.__cam = null;
+      var show = function (id, text) { document.getElementById(id).textContent = text; };
       document.getElementById('permiso').addEventListener('click', function () {
         Notification.requestPermission().then(function (answer) {
           window.__permiso = answer;
-          document.getElementById('resultado').textContent = answer;
+          show('resultado', answer);
+        });
+      });
+      // La ubicacion se pide de verdad: eso dispara el permiso de la app. La posicion
+      // puede faltar (un runner no tiene proveedor), pero el estado del permiso si
+      // existe, y eso es lo que mide la suite.
+      document.getElementById('geo').addEventListener('click', function () {
+        var done = function (position, error) {
+          navigator.permissions.query({ name: 'geolocation' }).then(function (status) {
+            window.__geo = JSON.stringify({
+              state: status.state,
+              position: position,
+              error: error,
+            });
+            show('resultado-geo', status.state + (position ? ' ' + position : ''));
+          });
+        };
+        navigator.geolocation.getCurrentPosition(
+          function (result) {
+            done(result.coords.latitude + ',' + result.coords.longitude, null);
+          },
+          function (failure) {
+            done(null, failure.code);
+          },
+          { timeout: 3000, maximumAge: 0 },
+        );
+      });
+      document.getElementById('cam').addEventListener('click', function () {
+        navigator.mediaDevices.getUserMedia({ video: true }).then(function (stream) {
+          var tracks = stream.getVideoTracks().length;
+          stream.getTracks().forEach(function (track) { track.stop(); });
+          window.__cam = JSON.stringify({ state: 'ok', tracks: tracks, name: null });
+          show('resultado-cam', 'ok ' + tracks);
+        }).catch(function (error) {
+          window.__cam = JSON.stringify({ state: 'error', tracks: 0, name: error.name });
+          show('resultado-cam', error.name);
         });
       });
     </script>
@@ -129,33 +193,11 @@ let profileDir = '';
  * arrancar, la app está en el inicio y todavía no hay `<webview>` que cargar.
  */
 async function openFixture(client, url) {
-  const address = JSON.stringify(ADDRESS_SELECTOR);
-  // El foco puede aplicarse en el frame siguiente; se reintenta hasta que el
-  // documento lo refleje, en vez de exigirlo en la misma evaluación.
-  await waitForExpression(
-    client,
-    `(() => {
-      const input = document.querySelector(${address}) ??
-        document.querySelector('input[aria-controls="terminus-address-suggestions"]');
-      if (!input) return false;
-      input.focus();
-      input.select();
-      return document.activeElement === input;
-    })()`,
-    (focused) => focused === true,
-    'la barra de direcciones enfocada',
-    5000,
-  );
-
-  const command = `goto ${url}`;
-  await client.send('Input.insertText', { text: command });
-  await waitForExpression(
-    client,
-    `document.querySelector(${address})?.value ?? null`,
-    (value) => value === command,
-    `el comando «${command}» en la barra de direcciones`,
-    5000,
-  );
+  await typeInAddressBar(client, `goto ${url}`, {
+    selector: ADDRESS_SELECTOR,
+    // Al arrancar, la app está en el inicio y el panel activo aún no tiene barra.
+    fallbackSelector: 'input[aria-controls="terminus-address-suggestions"]',
+  });
   // Deja que React aplique el valor antes de enviar Enter.
   await sleep(200);
   const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
@@ -176,18 +218,18 @@ async function openFixture(client, url) {
   );
 }
 
-/** Pulsa el botón del fixture con entrada real dentro del invitado. */
-async function clickPermissionButton(client) {
+/** Pulsa un botón del fixture con entrada real dentro del invitado. */
+async function clickFixtureButton(client, id) {
   const clicked = await client.evaluate(`(() => {
     const view = document.querySelector(${JSON.stringify(GUEST_SELECTOR)});
     if (!view || typeof view.sendInputEvent !== 'function') {
       return { ok: false, reason: 'el invitado no expone sendInputEvent' };
     }
     return Promise.resolve(
-      view.executeJavaScript(${JSON.stringify(PERMISSION_CLICK_SCRIPT)}, true)
+      view.executeJavaScript(${JSON.stringify(fixtureClickScript(id))}, true)
     ).then((point) => {
       if (!point) return { ok: false, reason: 'el fixture no tiene el botón' };
-      if (point.hit !== 'permiso') {
+      if (point.hit !== ${JSON.stringify(id)}) {
         return {
           ok: false,
           reason: 'el clic caería sobre ' + point.hit + ' en ' + point.x + ',' + point.y,
@@ -200,12 +242,12 @@ async function clickPermissionButton(client) {
       return { ok: true };
     });
   })()`);
-  assert.equal(clicked.ok, true, `No se pudo pulsar el botón de permiso (${clicked.reason}).`);
+  assert.equal(clicked.ok, true, `No se pudo pulsar el botón ${id} del fixture (${clicked.reason}).`);
 }
 
-/** Pulsa el botón y espera la respuesta que el fixture guarda en `window.__permiso`. */
+/** Pulsa el botón de notificaciones y espera la respuesta de la página. */
 async function requestPermission(client) {
-  await clickPermissionButton(client);
+  await clickFixtureButton(client, 'permiso');
   return waitForExpression(
     client,
     guestExpression('window.__permiso ?? null'),
@@ -213,6 +255,54 @@ async function requestPermission(client) {
     'la respuesta de Notification.requestPermission()',
     15000,
   );
+}
+
+/** Espera a que el fixture pinte el botón de ubicación en un punto pulsable. */
+async function waitForGeolocationInput(client) {
+  await waitForExpression(
+    client,
+    fixtureClickPoint('geo'),
+    (point) => Boolean(point) && point.hit === 'geo',
+    'el botón de ubicación del fixture',
+    20000,
+  );
+}
+
+/** Pulsa «Pedir ubicación» y devuelve `{ state, position, error }` del fixture. */
+async function requestGeolocation(client) {
+  await clickFixtureButton(client, 'geo');
+  const raw = await waitForExpression(
+    client,
+    guestExpression('window.__geo ?? null'),
+    (value) => typeof value === 'string' && value.length > 0,
+    'la respuesta de geolocalización del fixture',
+    20000,
+  );
+  return JSON.parse(raw);
+}
+
+/** Espera a que el fixture pinte el botón de cámara en un punto pulsable. */
+async function waitForCameraInput(client) {
+  await waitForExpression(
+    client,
+    fixtureClickPoint('cam'),
+    (point) => Boolean(point) && point.hit === 'cam',
+    'el botón de cámara del fixture',
+    20000,
+  );
+}
+
+/** Pulsa «Pedir cámara» y devuelve `{ state, tracks, name }` del fixture. */
+async function requestCamera(client) {
+  await clickFixtureButton(client, 'cam');
+  const raw = await waitForExpression(
+    client,
+    guestExpression('window.__cam ?? null'),
+    (value) => typeof value === 'string' && value.length > 0,
+    'la respuesta de cámara del fixture',
+    30000,
+  );
+  return JSON.parse(raw);
 }
 
 /** Recarga la página del invitado y espera al documento nuevo. */
@@ -295,6 +385,9 @@ async function main() {
   pass(
     `con TERMINUS_E2E_PERMISSION_ANSWER=allow, sobre la decisión deny guardada, la petición resuelve «${granted}».`,
   );
+  // Sin cerrar esta instancia, el arranque del paso 4 choca con el lock de instancia
+  // única y muere antes de exponer CDP.
+  await app.stop();
 
   // Paso 4: geolocalización con allow
   app = await launchInstalledApp({
@@ -303,13 +396,18 @@ async function main() {
     env: { ...baseEnv, TERMINUS_E2E_GEO_ANSWER: 'allow' },
   });
   await openFixture(app.client, fixture.pageUrl);
-  // Esperamos que el fixture tenga el input de geolocalización
   await waitForGeolocationInput(app.client);
   const geo = await requestGeolocation(app.client);
-  // El fixture debería haber guardado la decisión; verificamos que no sea null.
-  assert.notStrictEqual(geo, null, 'Geolocalización debería haber sido solicitada y responder.');
+  // La posición puede faltar —un runner no tiene proveedor de ubicación—, pero el
+  // permiso del origen es lo que esta suite mide, y tiene que haber quedado concedido.
+  assert.equal(
+    geo.state,
+    'granted',
+    `Con TERMINUS_E2E_GEO_ANSWER=allow el permiso de ubicación quedó en «${geo.state}».`,
+  );
   pass(
-    `geolocalización solicitada con TERMINUS_E2E_GEO_ANSWER=allow, respuesta: "${geo}".`,
+    `geolocalización con TERMINUS_E2E_GEO_ANSWER=allow: permiso «${geo.state}»` +
+      `${geo.position ? ` y posición ${geo.position}` : ` (sin proveedor de posición, código ${geo.error})`}.`,
   );
   await app.stop();
 
@@ -320,13 +418,16 @@ async function main() {
     env: { ...baseEnv, TERMINUS_E2E_CAM_ANSWER: 'allow' },
   });
   await openFixture(app.client, fixture.pageUrl);
-  // Esperamos que el fixture tenga el input de cámara
   await waitForCameraInput(app.client);
   const cam = await requestCamera(app.client);
-  // El fixture debería haber guardado la decisión; verificamos que no sea null.
-  assert.notStrictEqual(cam, null, 'Cámara debería haber sido solicitada y responder.');
+  assert.equal(
+    cam.state,
+    'ok',
+    `Con TERMINUS_E2E_CAM_ANSWER=allow getUserMedia respondió «${cam.name ?? cam.state}».`,
+  );
+  assert.ok(cam.tracks >= 1, `La cámara entregó ${cam.tracks} pista(s) de video.`);
   pass(
-    `cámara solicitada con TERMINUS_E2E_CAM_ANSWER=allow, respuesta: "${cam}".`,
+    `cámara con TERMINUS_E2E_CAM_ANSWER=allow: getUserMedia entrega ${cam.tracks} pista(s) de video.`,
   );
   assert.equal(stepsRun, TOTAL_STEPS, 'pasos ejecutados: ' + stepsRun + '/' + TOTAL_STEPS);
 }
