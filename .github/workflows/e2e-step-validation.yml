@@ -1,5 +1,15 @@
 name: E2E Step Validation
 
+# Valida que cada suite del E2E instalado cierre con «STEPS: n/m» igual al total
+# que declara `scripts/e2e-suites.mjs`. Esa comprobación la hace el propio
+# `scripts/e2e-run.mjs` (vía `scripts/lib/e2e-report.mjs`), así que el recuento
+# esperado vive en un solo sitio y este workflow no lo duplica.
+#
+# El E2E instalado corre contra la app instalada, no contra el árbol de trabajo:
+# por eso el job compila el instalador NSIS, lo instala con `/S` y solo entonces
+# lanza las suites. Un runner alojado (`windows-latest`) trae Windows limpio y no
+# tiene Terminus instalado, así que sin este paso el E2E nunca podría ejecutarse.
+
 on:
   push:
     branches: [main]
@@ -8,121 +18,99 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
+
+concurrency:
+  group: e2e-step-validation-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate-steps:
     name: Validar recuentos de pasos E2E en Windows
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     env:
       # Marca que este job necesita una sesión interactiva de escritorio.
-      # El runner de GitHub en windows-latest suele tenerla, pero si se ejecuta
-      # sobre una cuenta de servicio sin escritorio fallará el preflight.
       TERMINUS_E2E_REQUIRES_DESKTOP: 'true'
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Configure Node.js
+      - name: Configurar Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Instalar dependencias
         run: npm ci
 
-      - name: Preflight - validar sesión interactiva
-        if: always()
+      # El E2E instalado usa SendKeys y ventanas reales: sin escritorio no corre.
+      # Falla antes de compilar nada, así que no se gasta el build en balde.
+      - name: Preflight de sesión interactiva
         shell: pwsh
+        timeout-minutes: 1
         run: |
           $sessionId = (Get-Process -Id $PID).SessionId
           if ($sessionId -eq 0) {
-            throw "El E2E instalado requiere una sesión interactiva, pero el runner está en la sesión 0. Arranca el runner con run.cmd en una sesión de escritorio, no con svc.cmd."
+            throw "El E2E instalado requiere una sesión interactiva, pero el runner está en la sesión 0. Arranca el runner con run.cmd en una sesión de escritorio, no con svc.cmd. Consulta docs/e2e-installed-windows.md."
           }
           if (-not [Environment]::UserInteractive) {
             throw "El E2E instalado requiere [Environment]::UserInteractive = true. Revisa la sesión del runner y consulta docs/e2e-installed-windows.md."
           }
           Write-Host "Sesión interactiva detectada: SessionId=$sessionId"
 
-      - name: Verificar ejecutable instalado
+      - name: Compilar la app y el instalador NSIS
+        run: npm run desktop:build
+
+      # Instala el build de este commit y deja `TERMINUS_INSTALLED_EXE` para las
+      # suites. El NSIS puede abrir la app al terminar; el E2E arranca su propia
+      # instancia, así que se cierra cualquier proceso que haya quedado vivo.
+      - name: Instalar el build actual
         shell: pwsh
         run: |
+          $installer = Get-ChildItem -LiteralPath release -Filter 'Terminus Setup *.exe' |
+            Where-Object { $_.Name -notlike '*.__uninstaller.exe' } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw 'No se generó el instalador NSIS.'
+          }
+
+          Write-Host "Instalando $($installer.FullName)"
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "El instalador terminó con código $($process.ExitCode)."
+          }
+
           $exe = Join-Path $env:LOCALAPPDATA 'Programs\Terminus\Terminus.exe'
           if (-not (Test-Path -LiteralPath $exe)) {
-            throw "No se encontró la app instalada en $exe. Instala el build actual antes de ejecutar la validación de pasos."
+            throw "No se encontró la app instalada en $exe."
           }
-          Write-Host "Ejecutable instalado verificado: $exe"
 
+          Get-Process -Name Terminus -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+
+          "TERMINUS_INSTALLED_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Ejecutable instalado: $exe"
+
+      # `e2e-run.mjs` recorre `e2e-suites.mjs`, lanza cada suite con `npm run`,
+      # guarda su log en `artifacts/e2e/<log>` y falla si una suite no cierra con
+      # el recuento esperado. Una suite que sale con 0 pero perdió un paso pone el
+      # job en rojo igual.
       - name: Ejecutar E2E y validar recuentos de pasos
-        shell: pwsh
-        run: |
-          # Ejecutar el runner de E2E
-          node scripts/e2e-run.mjs
-          $exitCode = $LASTEXITCODE
-          
-          # Leer los logs generados y validar recuentos de pasos
-          $outDir = "artifacts/e2e"
-          
-          if (-not (Test-Path -LiteralPath $outDir)) {
-            Write-Error "Directorio de logs no encontrado: $outDir"
-            exit 1
-          }
-          
-          # Mapeo de suites a nombres de archivo de log (según e2e-suites.mjs)
-          $stepValidation = @{
-            ctrl-f    = "e2e-installed.log"
-            ui        = "e2e-installed-ui.log"
-            ui-de     = "e2e-installed-ui-de.log"
-            browser   = "e2e-installed-browser.log"
-            network   = "e2e-network-policy.log"
-          }
-          $allPassed = $true
-          
-          foreach ($suiteLabel in @('ctrl-f', 'ui', 'ui-de', 'browser', 'network')) {
-            $logFile = $stepValidation[$suiteLabel]
-            $logPath = Join-Path $outDir $logFile
-            
-            if (-not (Test-Path -LiteralPath $logPath)) {
-              Write-Host "⚠ Log no encontrado para suite: $suiteLabel ($logPath)"
-              $allPassed = $false
-              continue
-            }
-            
-            $logContent = Get-Content -LiteralPath $logPath -Encoding utf8
-            $stepsPattern = [regex]::Match($logContent, 'STEPS: (\d+)/(\d+)')
-            
-            if (-not $stepsPattern.Success) {
-              Write-Error "[$suiteLabel] No se encontró el patrón STEPS: n/m en el log."
-              $allPassed = $false
-              continue
-            }
-            
-            $executed = [int]$stepsPattern.Groups[1].Value
-            $expected = [int]$stepsPattern.Groups[2].Value
-            
-            Write-Host "[$suiteLabel] Pasos: $executed/$expected"
-            
-            if ($executed -ne $expected) {
-              Write-Error "[$suiteLabel] DESINCRIMINACIÓN: Ejecutó $executed pasos pero se esperaban $expected."
-              $allPassed = $false
-            } else {
-              Write-Host "[$suiteLabel] ✅ Recuento de pasos correcto"
-            }
-          }
-          
-          if (-not $allPassed) {
-            Write-Error "Validación de recuentos de pasos fallida. Consulte los errores arriba."
-            exit 1
-          }
-          
-          Write-Host "✅ Todos los recuentos de pasos están sincronizados."
+        run: node scripts/e2e-run.mjs
 
-      - name: Fallo en validación de pasos
-        if: failure()
-        run: |
-          Escribe aquí cualquier acción de notificación o reporte que desees
-          cuando la validación de recuentos de pasos falla.
+      # Los logs y las capturas se suben también cuando el paso falla, que es
+      # justo cuando hacen falta para diagnosticar (`failure-<suite>-<sello>.log`).
+      - name: Publicar logs del E2E
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-step-validation-logs
+          path: |
+            artifacts/e2e/*.log
+            artifacts/e2e/*.png
+          if-no-files-found: ignore
