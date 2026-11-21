@@ -936,13 +936,65 @@ async function main() {
     'las dos búsquedas recientes en el inicio',
     20000,
   );
-  // 6.5. Pestañas de fondo vivas: la segunda pestaña permanece activa y responde mientras la primera opera.
-  const secondAlive = await cdp.evaluate((() => {
-    const pages = window.top.document.querySelectorAll('webview[role="tab"]');
-    return pages.length >= 2 && pages[1].style.display !== "none";
-  })());
-  assert.notStrictEqual(secondAlive, null, 'La segunda pestaña debe estar visible y activa.');
-  pass(`segunda pestaña activa en background (display: ${secondAlive ? "block" : "none"}).`);
+  // 6.5. Pestañas de fondo vivas: una superficie por pestaña web, montada siempre.
+  // Al abrir otra pestaña, la anterior sigue en el DOM y se oculta con `visibility`
+  // (clase `invisible`), no con `display: none`, así que su audio, sus descargas y lo
+  // escrito sobreviven al cambio de pestaña. Si el panel se desmontara vería la marca
+  // `data-e2e-survived` desaparecer, que es lo que comprueba el paso.
+  const panesBefore = await cdp.evaluate(
+    `(() => {
+      const panes = [...document.querySelectorAll('[data-e2e="browser-pane"]')];
+      panes.forEach((pane) => { pane.dataset.e2eSurvived = 'si'; });
+      return panes.length;
+    })()`,
+  );
+  await runCommand(cdp, 'tab new web');
+  const backgroundPanes = await waitForExpression(
+    cdp,
+    `(() => {
+      const panes = [...document.querySelectorAll('[data-e2e="browser-pane"]')];
+      const active = panes.filter((pane) => pane.getAttribute('data-active') === 'true');
+      const inactive = panes.filter((pane) => pane.getAttribute('data-active') === 'false');
+      const hidden = inactive[0] ?? null;
+      const style = hidden ? getComputedStyle(hidden) : null;
+      return {
+        panes: panes.length,
+        active: active.length,
+        keepsWebview: Boolean(hidden && hidden.querySelector('webview')),
+        survived: hidden ? hidden.dataset.e2eSurvived ?? null : null,
+        ariaHidden: hidden ? hidden.getAttribute('aria-hidden') : null,
+        display: style ? style.display : null,
+        visibility: style ? style.visibility : null,
+      };
+    })()`,
+    (state) =>
+      state.panes >= 2 &&
+      state.active === 1 &&
+      state.survived === 'si' &&
+      state.ariaHidden === 'true' &&
+      state.display !== 'none' &&
+      state.visibility === 'hidden',
+    'la superficie de la pestaña de fondo montada y oculta por visibility',
+    20000,
+  );
+  assert.equal(
+    backgroundPanes.panes,
+    panesBefore + 1,
+    `Tras «tab new web» hay ${backgroundPanes.panes} superficies; se esperaban ${panesBefore + 1}.`,
+  );
+  pass(
+    `pestaña de fondo viva: ${backgroundPanes.panes} superficies, la inactiva conserva su nodo (no se remonta) y se oculta con visibility (display: ${backgroundPanes.display}${backgroundPanes.keepsWebview ? ', con su <webview> adjunto' : ''}).`,
+  );
+
+  // Se cierra la pestaña extra para no alterar los pasos de pestañas que vienen después.
+  await runCommand(cdp, 'tab close');
+  await waitForExpression(
+    cdp,
+    `document.querySelectorAll('[data-e2e="browser-pane"]').length`,
+    (count) => count === panesBefore,
+    'volver a la pestaña que estaba activa antes de 6.5',
+    10000,
+  );
 
 
   // Tamaño real de la ventana antes de encogerla: es el que se restaura después.
