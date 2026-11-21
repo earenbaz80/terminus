@@ -187,37 +187,48 @@ let fixture = null;
 let profileDir = '';
 
 /**
- * Navega el panel activo por su barra de direcciones, como cualquier comando: al
- * arrancar, la app está en el inicio y todavía no hay `<webview>` que cargar.
+ * Escribe un comando en la barra de direcciones y comprueba que React lo refleje.
+ *
+ * En un arranque en frío la terminal se monta después de que exista el input y
+ * React lo vuelve a pintar: el primer `insertText` aterriza en un nodo que ya no
+ * está y la barra queda vacía, que es como fallaba el primer paso en el runner de
+ * CI. Se reintenta en vez de exigirlo a la primera.
  */
-async function openFixture(client, url) {
+async function typeInAddressBar(client, command) {
   const address = JSON.stringify(ADDRESS_SELECTOR);
-  // El foco puede aplicarse en el frame siguiente; se reintenta hasta que el
-  // documento lo refleje, en vez de exigirlo en la misma evaluación.
-  await waitForExpression(
-    client,
-    `(() => {
+  let typed = '';
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await client.evaluate(`(() => {
       const input = document.querySelector(${address}) ??
         document.querySelector('input[aria-controls="terminus-address-suggestions"]');
       if (!input) return false;
       input.focus();
       input.select();
       return document.activeElement === input;
-    })()`,
-    (focused) => focused === true,
-    'la barra de direcciones enfocada',
-    5000,
-  );
+    })()`);
+    await client.send('Input.insertText', { text: command });
+    typed = await waitForExpression(
+      client,
+      `document.querySelector(${address})?.value ?? null`,
+      (value) => value === command,
+      `el comando «${command}» en la barra de direcciones`,
+      1000,
+    ).catch(() => '');
+    if (typed === command) return;
+  }
 
-  const command = `goto ${url}`;
-  await client.send('Input.insertText', { text: command });
-  await waitForExpression(
-    client,
-    `document.querySelector(${address})?.value ?? null`,
-    (value) => value === command,
-    `el comando «${command}» en la barra de direcciones`,
-    5000,
+  assert.fail(
+    `No se pudo escribir «${command}» en la barra de direcciones (quedó «${typed}»).`,
   );
+}
+
+/**
+ * Navega el panel activo por su barra de direcciones, como cualquier comando: al
+ * arrancar, la app está en el inicio y todavía no hay `<webview>` que cargar.
+ */
+async function openFixture(client, url) {
+  await typeInAddressBar(client, `goto ${url}`);
   // Deja que React aplique el valor antes de enviar Enter.
   await sleep(200);
   const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
