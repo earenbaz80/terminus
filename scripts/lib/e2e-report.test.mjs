@@ -100,6 +100,28 @@ describe('summarizeSuites', () => {
     );
   });
 
+  it('añade a la anotación la última línea de fallo del log', () => {
+    const summary = summarizeSuites(
+      suites,
+      readFrom({
+        'e2e-installed.log': 'FAIL 1/3: no arrancó\r\nFAIL 2/3: sigue sin arrancar\r\nSTEPS: 1/3\r\n',
+        'e2e-installed-ui.log': 'STEPS: 6/6\r\n',
+      }),
+    );
+
+    expect(summary.problems[0].message).toBe(
+      'e2e-installed.log declara 1/3 pasos; se esperaban 3/3. Último fallo del log: FAIL 2/3: sigue sin arrancar',
+    );
+  });
+
+  it('no inventa detalle cuando el log no tiene línea de fallo', () => {
+    const summary = summarizeSuites(suites, readFrom({ 'e2e-installed.log': 'STEPS: 0/3\r\n' }));
+
+    expect(summary.problems[0].message).toBe(
+      'e2e-installed.log declara 0/3 pasos; se esperaban 3/3.',
+    );
+  });
+
   it('acepta un total mayor que el esperado como fallo', () => {
     const summary = summarizeSuites(
       suites,
