@@ -131,15 +131,22 @@ let profileDir = '';
  */
 async function openFixture(client, url) {
   const address = JSON.stringify(ADDRESS_SELECTOR);
-  const focused = await client.evaluate(`(() => {
-    const input = document.querySelector(${address}) ??
-      document.querySelector('input[aria-controls="terminus-address-suggestions"]');
-    if (!input) return false;
-    input.focus();
-    input.select();
-    return document.activeElement === input;
-  })()`);
-  assert.equal(focused, true, 'No se pudo enfocar la barra de direcciones.');
+  // El foco puede aplicarse en el frame siguiente; se reintenta hasta que el
+  // documento lo refleje, en vez de exigirlo en la misma evaluación.
+  await waitForExpression(
+    client,
+    `(() => {
+      const input = document.querySelector(${address}) ??
+        document.querySelector('input[aria-controls="terminus-address-suggestions"]');
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return document.activeElement === input;
+    })()`,
+    (focused) => focused === true,
+    'la barra de direcciones enfocada',
+    5000,
+  );
 
   const command = `goto ${url}`;
   await client.send('Input.insertText', { text: command });
