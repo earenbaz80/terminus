@@ -36,6 +36,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright';
 import { NETWORK_SKIP_DEV_ENV, networkSkipsDev, suiteSteps } from './e2e-suites.mjs';
+import { resolvedExe } from './lib/e2e-executable.mjs';
 
 const LOG = '[e2e-network]';
 // El ejecutor del CI compara esta cifra con la que declara `scripts/e2e-suites.mjs`.
@@ -61,7 +62,7 @@ function expectStep(condition, message) {
 }
 
 const packagedExecutable = () =>
-  path.resolve(process.env.TERMINUS_BUILD_DIR ?? path.join('release', 'win-unpacked'), 'Terminus.exe');
+  resolvedExe({ fallbackToLocalAppData: false }) || path.resolve(process.env.TERMINUS_BUILD_DIR ?? path.join('release', 'win-unpacked'), 'Terminus.exe');
 
 const artifactsDirectory = () =>
   path.resolve(process.env.TERMINUS_E2E_ARTIFACTS ?? path.join('artifacts', 'e2e'));

@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { resolvedExe } from './lib/e2e-executable.mjs';
 import { suiteSteps } from './e2e-suites.mjs';
 import {
   assertInstalledMatchesBuild,
@@ -35,9 +36,7 @@ const LOG = '[e2e-installed-browser]';
 const TOTAL_STEPS = suiteSteps('browser');
 let stepsRun = 0;
 
-const installedExe = process.env.TERMINUS_INSTALLED_EXE
-  ? path.resolve(process.env.TERMINUS_INSTALLED_EXE)
-  : path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Terminus', 'Terminus.exe');
+const installedExe = resolvedExe({ fallbackToLocalAppData: true }) || path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Terminus', 'Terminus.exe');
 
 // Cada pestaña web monta su superficie: el invitado y la barra que interesan son los
 // del panel visible, no los primeros del documento.
@@ -297,6 +296,38 @@ async function main() {
     `con TERMINUS_E2E_PERMISSION_ANSWER=allow, sobre la decisión deny guardada, la petición resuelve «${granted}».`,
   );
 
+  // Paso 4: geolocalización con allow
+  app = await launchInstalledApp({
+    exe: installedExe,
+    profileDir,
+    env: { ...baseEnv, TERMINUS_E2E_GEO_ANSWER: 'allow' },
+  });
+  await openFixture(app.client, fixture.pageUrl);
+  // Esperamos que el fixture tenga el input de geolocalización
+  await waitForGeolocationInput(app.client);
+  const geo = await requestGeolocation(app.client);
+  // El fixture debería haber guardado la decisión; verificamos que no sea null.
+  assert.notStrictEqual(geo, null, 'Geolocalización debería haber sido solicitada y responder.');
+  pass(
+    `geolocalización solicitada con TERMINUS_E2E_GEO_ANSWER=allow, respuesta: "${geo}".`,
+  );
+  await app.stop();
+
+  // Paso 5: cámara con allow
+  app = await launchInstalledApp({
+    exe: installedExe,
+    profileDir,
+    env: { ...baseEnv, TERMINUS_E2E_CAM_ANSWER: 'allow' },
+  });
+  await openFixture(app.client, fixture.pageUrl);
+  // Esperamos que el fixture tenga el input de cámara
+  await waitForCameraInput(app.client);
+  const cam = await requestCamera(app.client);
+  // El fixture debería haber guardado la decisión; verificamos que no sea null.
+  assert.notStrictEqual(cam, null, 'Cámara debería haber sido solicitada y responder.');
+  pass(
+    `cámara solicitada con TERMINUS_E2E_CAM_ANSWER=allow, respuesta: "${cam}".`,
+  );
   assert.equal(stepsRun, TOTAL_STEPS, 'pasos ejecutados: ' + stepsRun + '/' + TOTAL_STEPS);
 }
 

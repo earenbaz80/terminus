@@ -23,6 +23,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { resolvedExe } from './lib/e2e-executable.mjs';
 import { suiteSteps } from './e2e-suites.mjs';
 import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
 import {
@@ -117,9 +118,7 @@ function pass(message) {
   console.log(LOG + ' PASS ' + stepsRun + '/' + TOTAL_STEPS + ': ' + message + ` (${seconds} s)`);
 }
 
-const installedExe = process.env.TERMINUS_INSTALLED_EXE
-  ? path.resolve(process.env.TERMINUS_INSTALLED_EXE)
-  : path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Terminus', 'Terminus.exe');
+const installedExe = resolvedExe({ fallbackToLocalAppData: true }) || path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Terminus', 'Terminus.exe');
 
 let app = null;
 let fixtureServer = null;

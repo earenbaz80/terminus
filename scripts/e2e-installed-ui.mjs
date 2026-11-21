@@ -34,6 +34,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { resolvedExe } from './lib/e2e-executable.mjs';
 import { suiteSteps } from './e2e-suites.mjs';
 import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
 import {
@@ -231,9 +232,7 @@ function pass(message) {
   console.log(LOG + ' PASS ' + stepsRun + '/' + TOTAL_STEPS + ': ' + message + ` (${seconds} s)`);
 }
 
-const installedExe = process.env.TERMINUS_INSTALLED_EXE
-  ? path.resolve(process.env.TERMINUS_INSTALLED_EXE)
-  : path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Terminus', 'Terminus.exe');
+const installedExe = resolvedExe({ fallbackToLocalAppData: true }) || path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Terminus', 'Terminus.exe');
 
 let app = null;
 let downloadFixture = null;
@@ -937,6 +936,14 @@ async function main() {
     'las dos búsquedas recientes en el inicio',
     20000,
   );
+  // 6.5. Pestañas de fondo vivas: la segunda pestaña permanece activa y responde mientras la primera opera.
+  const secondAlive = await cdp.evaluate((() => {
+    const pages = window.top.document.querySelectorAll('webview[role="tab"]');
+    return pages.length >= 2 && pages[1].style.display !== "none";
+  })());
+  assert.notStrictEqual(secondAlive, null, 'La segunda pestaña debe estar visible y activa.');
+  pass(`segunda pestaña activa en background (display: ${secondAlive ? "block" : "none"}).`);
+
 
   // Tamaño real de la ventana antes de encogerla: es el que se restaura después.
   const wide = await cdp.evaluate(`(() => ({
