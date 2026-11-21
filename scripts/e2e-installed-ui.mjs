@@ -68,6 +68,8 @@ const UI_MARKER = 'terminus-theme-select';
 // Cada pestaña web monta su propia superficie, así que la barra que se usa es la
 // del panel activo: sin este prefijo `querySelector` devolvería la de una pestaña
 // de fondo, que además está invisible y no acepta foco.
+import { typeInAddressBar } from './lib/e2e-address-bar.mjs';
+
 const ACTIVE_PANE = '[data-e2e="browser-pane"][data-active="true"]';
 const ADDRESS_SELECTOR = `${ACTIVE_PANE} input[aria-controls="terminus-address-suggestions"]`;
 const SEARCH_QUERY = 'terminus e2e ui';
@@ -406,24 +408,9 @@ async function readEnterTrace(client) {
 
 /** Runs a terminal command through the address bar of the browser surface. */
 async function runCommand(client, command) {
-  const address = JSON.stringify(ADDRESS_SELECTOR);
-  const focused = await client.evaluate(`(() => {
-    const input = document.querySelector(${address});
-    if (!input) return false;
-    input.focus();
-    input.select();
-    return document.activeElement === input;
-  })()`);
-  assert.equal(focused, true, 'No se pudo enfocar la barra de direcciones.');
-
-  await client.send('Input.insertText', { text: command });
-  await waitForExpression(
-    client,
-    `document.querySelector(${address})?.value ?? null`,
-    (value) => value === command,
-    `el comando «${command}» en la barra de direcciones`,
-    5000,
-  );
+  // El reintento vive en `lib/e2e-address-bar.mjs`: en un arranque en frío el
+  // primer `insertText` cae en un input que React repinta y la barra queda vacía.
+  await typeInAddressBar(client, command, { selector: ADDRESS_SELECTOR });
   // Deja que React aplique el valor antes de enviar Enter.
   await sleep(200);
   await installEnterTrace(client);
