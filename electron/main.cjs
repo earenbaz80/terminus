@@ -30,6 +30,14 @@ const http = require('node:http');
 const net = require('node:net');
 const path = require('node:path');
 
+// El E2E de permisos pide cámara en un runner que no tiene ninguna: con este gancho
+// Chromium entrega un dispositivo falso y `getUserMedia` puede concederse. El permiso
+// sigue pasando por el manejador de la app, así que la prueba mide la decisión de
+// Terminus y no se salta el diálogo con `--use-fake-ui-for-media-stream`.
+if (process.env.TERMINUS_E2E_CAM_ANSWER) {
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+}
+
 const APP_ROOT = app.getAppPath();
 const APP_ORIGIN_FALLBACK = 'http://127.0.0.1';
 const MAXIMIZED_CHANGED_CHANNEL = 'terminus:window:maximized-changed';

@@ -51,12 +51,31 @@ const permissionState = () => {
  * nativo no se puede pulsar desde CDP, y guarda la respuesta igual que el diálogo:
  * así el E2E comprueba la persistencia y no solo el cableado.
  */
+/**
+ * Gancho del E2E por permiso: `TERMINUS_E2E_GEO_ANSWER` responde la ubicación y
+ * `TERMINUS_E2E_CAM_ANSWER` la cámara y el micrófono. El genérico sigue valiendo
+ * para los cuatro permisos que se preguntan, así que las suites que ya lo usaban
+ * no cambian.
+ */
+const E2E_ANSWER_ENV = {
+  geolocation: 'TERMINUS_E2E_GEO_ANSWER',
+  media: 'TERMINUS_E2E_CAM_ANSWER',
+};
+
+const forcedAnswerFor = (permission) => {
+  const names = [E2E_ANSWER_ENV[permission], 'TERMINUS_E2E_PERMISSION_ANSWER'].filter(Boolean);
+  for (const name of names) {
+    const value = process.env[name];
+    if (value === 'allow' || value === 'deny') return value;
+  }
+  return null;
+};
+
 const askPermission = async (contents, permission, details) => {
   const origin = normalizeOrigin(details?.requestingUrl || contents?.getURL?.() || '');
   if (!ASKABLE_PERMISSIONS.has(permission) || !origin) return false;
 
-  const forced = process.env.TERMINUS_E2E_PERMISSION_ANSWER;
-  const forcedAnswer = forced === 'allow' || forced === 'deny' ? forced : null;
+  const forcedAnswer = forcedAnswerFor(permission);
 
   let current;
   try {
