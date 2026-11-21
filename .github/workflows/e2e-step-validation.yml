@@ -101,15 +101,12 @@ jobs:
       # el recuento esperado. Una suite que sale con 0 pero perdió un paso pone el
       # job en rojo igual.
       #
-      # `--only`: hoy solo `ctrl-f` y `network` cierran su recuento completo.
-      # `ui` y `ui-de` mueren en el paso 6 (5/15) y `browser` en los pasos 4-5
-      # (3/5), igual en local que en el runner: son fallos de esas suites, no del
-      # pipeline. Quedan fuera para que este check no esté en rojo en cada push y
-      # PR por un problema ya conocido; al arreglarlas, quitar `--only` las
-      # devuelve todas (el recuento esperado sigue viviendo en
-      # `scripts/e2e-suites.mjs`, no aquí).
+      # Sin `--only`: corren las cinco suites de la lista (`ctrl-f`, `ui`,
+      # `ui-de`, `browser` y `network`). Un subconjunto aquí volvería a esconder
+      # el recuento de una suite en cada push; si alguna se cae, el arreglo va en
+      # la suite y el total esperado en `scripts/e2e-suites.mjs`, no en el YAML.
       - name: Ejecutar E2E y validar recuentos de pasos
-        run: node scripts/e2e-run.mjs --only ctrl-f,network
+        run: node scripts/e2e-run.mjs
 
       # Los logs y las capturas se suben también cuando el paso falla, que es
       # justo cuando hacen falta para diagnosticar (`failure-<suite>-<sello>.log`).
