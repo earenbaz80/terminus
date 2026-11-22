@@ -823,7 +823,7 @@ describe('anclas data-e2e del E2E instalado', () => {
     expect(chips[0].textContent?.trim()).toBe('electron');
   });
 
-  // El paso 6 mide el recorte en estrecho dentro del contenedor y con la etiqueta localizada.
+  // El paso 7 mide el recorte en estrecho dentro del contenedor y con la etiqueta localizada.
   it('conserva el contenedor de chips del inicio y su etiqueta', () => {
     renderSurface();
 

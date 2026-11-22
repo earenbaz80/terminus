@@ -13,7 +13,7 @@
  *   node scripts/e2e-ctrl-f-inject.mjs                                   # 3 500 ms, una corrida
  *   node scripts/e2e-ctrl-f-inject.mjs --delays 3000,3500 --runs 3
  *   node scripts/e2e-ctrl-f-inject.mjs --vk 84                           # la letra «t» (KeyT)
- *   node scripts/e2e-ctrl-f-inject.mjs --suite scripts/e2e-installed-ui.mjs --on 'PASS 8/12' --vk 84
+ *   node scripts/e2e-ctrl-f-inject.mjs --suite scripts/e2e-installed-ui.mjs --on 'PASS 9/15' --vk 84
  *
  * `--vk` acepta una secuencia (`--vk 9,84` manda Tab y luego «t», útil para llevar el foco al
  * campo de resultados) y `--on` espera un trozo de la salida de la suite en vez de un retardo. Deja la salida de cada corrida en `artifacts/injection/`

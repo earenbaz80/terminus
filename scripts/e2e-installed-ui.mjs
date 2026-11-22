@@ -105,7 +105,7 @@ const STRAY_FIELDS = [
 ];
 // Ancla de las chips recientes: distingue una búsqueda recordada de una sugerencia fija.
 const RECENT_CHIP = '[data-e2e="recent-search"]';
-// El grupo de chips y su etiqueta: el paso 6 comprueba el recorte en ventana estrecha.
+// El grupo de chips y su etiqueta: el paso 7 comprueba el recorte en ventana estrecha.
 const START_CHIPS = '[data-e2e="start-chips"]';
 const START_CHIPS_LABEL = '[data-e2e="start-chips-label"]';
 const START_SIGN = 'pre.ascii-sign-start';
@@ -574,17 +574,17 @@ async function applyE2ELocale(client) {
 }
 
 /**
- * Devuelve el layout ancho después de la ventana estrecha del paso 6.
+ * Devuelve el layout ancho después de la ventana estrecha del paso 7.
  *
  * `clearDeviceMetricsOverride` no siempre surte efecto: con la interfaz en alemán
- * el viewport se queda en 433 px y el paso 7 no ve las chips recortadas. Si el
+ * el viewport se queda en 433 px y el paso 8 no ve las chips recortadas. Si el
  * layout no vuelve, se fija el tamaño real que tenía la ventana antes de
  * encogerla, así que el estado queda igual que sin emulación y los pasos
  * siguientes no corren en un viewport inventado.
  *
  * El repintado no es inmediato aunque el ancho sea el correcto, y lo que se
  * exige no es solo el ancho: la etiqueta del grupo y las dos recientes tienen que
- * verse, que es lo que necesita el paso 7 para pulsar la chip correcta.
+ * verse, que es lo que necesita el paso 8 para pulsar la chip correcta.
  */
 async function restoreWideLayout(client, wide) {
   const expression = `(() => {
@@ -1159,7 +1159,7 @@ async function main() {
 
   // 9. Segunda pestaña: se abre desde la barra, navega por su cuenta y la primera
   //    conserva su URL y su historial mientras tanto.
-  // La sesión se guarda con retardo: se espera a que incluya el `inicio` del paso 8
+  // La sesión se guarda con retardo: se espera a que incluya el `inicio` del paso 9
   // (URL en el inicio, índice al final y entrada anterior distinta) antes de comparar.
   const firstTab = (
     await waitForExpression(
@@ -1690,7 +1690,7 @@ try {
   process.exitCode = 1;
 } finally {
   // Una sola línea para la corrida entera, en verde o en fallo: el FAIL de arriba dice
-  // en qué paso fue. La recarga del paso 11 borra el renderer, por eso se lee antes.
+  // en qué paso fue. La recarga del paso 12 borra el renderer, por eso se lee antes.
   if (app?.client) await logStrayKeys(app.client, 'fin de la corrida').catch(() => undefined);
   // El paso del E2E en CI lee esta línea para comparar con el total esperado.
   console.log(LOG + ' STEPS: ' + stepsRun + '/' + TOTAL_STEPS);

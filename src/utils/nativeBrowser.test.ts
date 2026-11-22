@@ -24,7 +24,7 @@ describe('native browser embedding', () => {
   });
 
   // Sin `allowpopups`, Electron no llama a `setWindowOpenHandler` del invitado y un
-  // `target=_blank` no llega nunca a la app: el paso 14 del E2E instalado lo cubre
+  // `target=_blank` no llega nunca a la app: el paso 15 del E2E instalado lo cubre
   // de punta a punta, y esto evita que el atributo se caiga sin que nadie lo note.
   it('permite que el invitado pida una ventana nueva para que la app decida', () => {
     const view = createNativeWebview();
