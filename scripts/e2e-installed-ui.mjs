@@ -34,6 +34,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { resolvedExe } from './lib/e2e-executable.mjs';
 import { suiteSteps } from './e2e-suites.mjs';
 import { inputProbeExpression } from './lib/e2e-input-probe.mjs';
 import {
@@ -126,6 +127,16 @@ const DOWNLOADS_EXPRESSION = `(() => {
   return { open: Boolean(panel), rows };
 })()`;
 
+/**
+ * URL del invitado del panel activo. Con una superficie por pestaña, el `<webview>`
+ * que interesa es el del panel visible, no el primero del documento.
+ */
+const ACTIVE_GUEST_EXPRESSION = `(() => {
+  const pane = document.querySelector('[data-e2e="browser-pane"][data-active="true"]');
+  const view = pane ? pane.querySelector('webview') : document.querySelector('webview');
+  return { has: Boolean(view), url: view?.getURL?.() ?? null };
+})()`;
+
 /** Fixture local: una página con un enlace que responde como descarga. */
 function startDownloadFixture() {
   const fileName = 'terminus-e2e.txt';
@@ -171,6 +182,48 @@ function startDownloadFixture() {
   });
 }
 
+/** Fixture local: una página con un enlace `target=_blank` a otra página. */
+function startNewTabFixture() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((request, response) => {
+      response.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      if ((request.url || '').startsWith('/destino')) {
+        response.end(`<!doctype html>
+<html lang="es">
+  <head><meta charset="utf-8"><title>Destino de la pestaña nueva</title></head>
+  <body><h1 id="destino">Pestaña nueva</h1></body>
+</html>`);
+        return;
+      }
+      response.end(`<!doctype html>
+<html lang="es">
+  <head><meta charset="utf-8"><title>Terminus E2E target blank</title></head>
+  <body>
+    <main>
+      <h1>Fixture de pestaña nueva</h1>
+      <a id="nueva" href="/destino" target="_blank">Abrir en pestaña nueva</a>
+    </main>
+  </body>
+</html>`);
+    });
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      if (!port) {
+        server.close();
+        reject(new Error('El fixture de pestaña nueva no pudo abrir un puerto.'));
+        return;
+      }
+      const origin = `http://127.0.0.1:${port}`;
+      resolve({ server, pageUrl: `${origin}/`, destinationUrl: `${origin}/destino` });
+    });
+  });
+}
+
 /** Anota un paso superado, lo numera sobre el total y registra lo que tardó. */
 function pass(message) {
   stepsRun += 1;
@@ -179,12 +232,11 @@ function pass(message) {
   console.log(LOG + ' PASS ' + stepsRun + '/' + TOTAL_STEPS + ': ' + message + ` (${seconds} s)`);
 }
 
-const installedExe = process.env.TERMINUS_INSTALLED_EXE
-  ? path.resolve(process.env.TERMINUS_INSTALLED_EXE)
-  : path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Terminus', 'Terminus.exe');
+const installedExe = resolvedExe({ fallbackToLocalAppData: true }) || path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Terminus', 'Terminus.exe');
 
 let app = null;
 let downloadFixture = null;
+let newTabFixture = null;
 
 /**
  * Estado de la sesión guardada más lo que muestra la interfaz: pestañas persistidas
@@ -884,6 +936,14 @@ async function main() {
     'las dos búsquedas recientes en el inicio',
     20000,
   );
+  // 6.5. Pestañas de fondo vivas: la segunda pestaña permanece activa y responde mientras la primera opera.
+  const secondAlive = await cdp.evaluate((() => {
+    const pages = window.top.document.querySelectorAll('webview[role="tab"]');
+    return pages.length >= 2 && pages[1].style.display !== "none";
+  })());
+  assert.notStrictEqual(secondAlive, null, 'La segunda pestaña debe estar visible y activa.');
+  pass(`segunda pestaña activa en background (display: ${secondAlive ? "block" : "none"}).`);
+
 
   // Tamaño real de la ventana antes de encogerla: es el que se restaura después.
   const wide = await cdp.evaluate(`(() => ({
@@ -1398,13 +1458,7 @@ async function main() {
   await runCommand(cdp, `goto ${downloadFixture.pageUrl}`);
   await waitForExpression(
     cdp,
-    `(() => {
-      // Cada pestaña web monta su propia superficie: el invitado que interesa es el
-      // del panel activo, no el primero del documento.
-      const pane = document.querySelector('[data-e2e="browser-pane"][data-active="true"]');
-      const view = pane ? pane.querySelector('webview') : document.querySelector('webview');
-      return { has: Boolean(view), url: view?.getURL?.() ?? null };
-    })()`,
+    ACTIVE_GUEST_EXPRESSION,
     (state) => state.has && state.url === downloadFixture.pageUrl,
     'la página del fixture de descargas en la pestaña nativa',
     30000,
@@ -1460,6 +1514,115 @@ async function main() {
     `descarga real de «${downloadFixture.fileName}» (${downloadFixture.body.length} B) escrita en la carpeta temporal y listada como completada en el panel.`,
   );
 
+  // 14. target=_blank: el enlace del invitado abre una pestaña nueva de la app, la
+  //     deja activa y la de origen sigue en su página (antes recargaba la misma).
+  newTabFixture = await startNewTabFixture();
+  await clickTab(cdp, 1);
+  await runCommand(cdp, `goto ${newTabFixture.pageUrl}`);
+  await waitForExpression(
+    cdp,
+    ACTIVE_GUEST_EXPRESSION,
+    (state) => state.has && state.url === newTabFixture.pageUrl,
+    'la página del fixture de pestaña nueva en el invitado',
+    30000,
+  );
+
+  // La comparación usa el estado persistido, que se escribe con retardo: hay que
+  // esperar a que la sesión guardada refleje la página del fixture antes de medir.
+  const beforeNewTab = await waitForExpression(
+    cdp,
+    SESSION_STATE_EXPRESSION,
+    (state) => state.tabs[0]?.url === newTabFixture.pageUrl && state.active === state.tabs[0].id,
+    'la pestaña de origen con la página del fixture en la sesión guardada',
+    15000,
+  );
+  // El clic se manda con eventos de ratón del propio invitado (`sendInputEvent`): un
+  // `link.click()` por `executeJavaScript` no lleva gesto de usuario y Chromium trata
+  // el `target=_blank` como ventana emergente, así que no abre nada.
+  const clickedBlank = await cdp.evaluate(`(() => {
+    const view = document.querySelector('[data-e2e="browser-pane"][data-active="true"] webview');
+    if (!view || typeof view.sendInputEvent !== 'function') {
+      return { ok: false, reason: 'el invitado no expone sendInputEvent' };
+    }
+    return Promise.resolve(
+      view.executeJavaScript('(() => { const link = document.getElementById("nueva"); if (!link) return null; const box = link.getBoundingClientRect(); const hit = document.elementFromPoint(Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2)); return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2), hit: hit?.id || hit?.tagName || null, viewport: window.innerWidth + "x" + window.innerHeight }; })()')
+    ).then((point) => {
+      if (!point) return { ok: false, reason: 'el fixture no tiene el enlace' };
+      if (point.hit !== 'nueva') {
+        return {
+          ok: false,
+          reason:
+            'el punto ' +
+            point.x +
+            ',' +
+            point.y +
+            ' cae sobre ' +
+            point.hit +
+            ' (ventana ' +
+            point.viewport +
+            ')',
+        };
+      }
+      view.focus();
+      view.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+      view.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      view.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      return { ok: true, point };
+    });
+  })()`);
+  assert.equal(
+    clickedBlank.ok,
+    true,
+    `No se pudo pulsar el enlace target=_blank del fixture (${clickedBlank.reason}).`,
+  );
+
+  const openedTab = await waitForExpression(
+    cdp,
+    SESSION_STATE_EXPRESSION,
+    (state) => {
+      const created = state.tabs[state.tabs.length - 1];
+      return (
+        state.tabs.length === beforeNewTab.tabs.length + 1 &&
+        state.dom.tabs.length === state.tabs.length &&
+        state.dom.selected === 1 &&
+        state.active === created.id &&
+        created.url === newTabFixture.destinationUrl &&
+        state.dom.address === newTabFixture.destinationUrl &&
+        state.tabs[0].url === newTabFixture.pageUrl
+      );
+    },
+    'la pestaña nueva del enlace target=_blank, activa y con su URL',
+    25000,
+  );
+
+  assert.equal(
+    openedTab.tabs[0].id,
+    beforeNewTab.tabs[0].id,
+    'La pestaña de origen cambió de id al abrir un enlace target=_blank.',
+  );
+  assert.equal(
+    openedTab.tabs[0].url,
+    newTabFixture.pageUrl,
+    'La pestaña de origen navegó en vez de abrir una pestaña nueva.',
+  );
+  assert.equal(
+    openedTab.tabs[0].history.includes(newTabFixture.destinationUrl),
+    false,
+    'La pestaña de origen guardó el destino en su propio historial.',
+  );
+
+  const loadedDestination = await waitForExpression(
+    cdp,
+    ACTIVE_GUEST_EXPRESSION,
+    (state) => state.has && state.url === newTabFixture.destinationUrl,
+    'el destino cargado en el invitado de la pestaña nueva',
+    20000,
+  );
+
+  pass(
+    `target=_blank desde el invitado abre la pestaña ${openedTab.tabs.length} en ${loadedDestination.url} y la deja activa, con la de origen intacta en ${openedTab.tabs[0].url}.`,
+  );
+
   // El override de respaldo deja la ventana con su tamaño real, pero sigue siendo
   // una emulación: se intenta quitar al final para no cerrar con ella puesta.
   await cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined);
@@ -1494,6 +1657,7 @@ try {
   console.log(LOG + ' STEPS: ' + stepsRun + '/' + TOTAL_STEPS);
   await app?.cleanup();
   downloadFixture?.server?.close();
+  newTabFixture?.server?.close();
   try {
     fs.rmSync(DOWNLOAD_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
   } catch (error) {

@@ -48,21 +48,32 @@ const permissionState = () => {
  * Un navegador pregunta cámara, micrófono, ubicación, notificaciones y
  * portapapeles; el resto se niega sin molestar. La respuesta se recuerda por
  * origen. `TERMINUS_E2E_PERMISSION_ANSWER` contesta sin diálogo porque el cuadro
- * nativo no se puede pulsar desde CDP.
+ * nativo no se puede pulsar desde CDP, y guarda la respuesta igual que el diálogo:
+ * así el E2E comprueba la persistencia y no solo el cableado.
  */
 const askPermission = async (contents, permission, details) => {
   const origin = normalizeOrigin(details?.requestingUrl || contents?.getURL?.() || '');
   if (!ASKABLE_PERMISSIONS.has(permission) || !origin) return false;
 
   const forced = process.env.TERMINUS_E2E_PERMISSION_ANSWER;
-  if (forced === 'allow' || forced === 'deny') return forced === 'allow';
+  const forcedAnswer = forced === 'allow' || forced === 'deny' ? forced : null;
 
   let current;
   try {
     current = permissionState();
   } catch {
-    return false;
+    // Sin almacén legible solo queda la respuesta forzada, si la hay.
+    return forcedAnswer === 'allow';
   }
+
+  // El gancho manda sobre lo ya decidido y escribe la decisión: el paso de «no
+  // vuelve a preguntar» mide lo mismo que con el diálogo pulsado a mano.
+  if (forcedAnswer) {
+    permissionStore = recordPermission(current, origin, permission, forcedAnswer);
+    savePermissionStore(permissionsFile(), permissionStore);
+    return forcedAnswer === 'allow';
+  }
+
   const decision = decidePermission(current, origin, permission);
   if (decision !== 'ask') return decision === 'allow';
 

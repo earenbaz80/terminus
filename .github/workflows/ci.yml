@@ -456,6 +456,7 @@ jobs:
             artifacts/e2e/e2e-installed.log
             artifacts/e2e/e2e-installed-ui.log
             artifacts/e2e/e2e-installed-ui-de.log
+            artifacts/e2e/e2e-installed-browser.log
             artifacts/e2e/*.png
           # El E2E instalado es opcional: sin log no hay nada que subir y no debe avisar.
           if-no-files-found: ignore

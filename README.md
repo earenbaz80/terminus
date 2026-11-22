@@ -93,7 +93,8 @@ npm run build                 # cliente Vite con code-splitting
 npm run build:server
 npm run test:e2e:adblock     # Electron empaquetado: red, popups y cosméticos
 npm run test:e2e:installed    # Windows: Ctrl+F en NATIVO, OSCURO y TEXTO
-npm run test:e2e:installed:ui # Windows: cabecera, tema persistido y búsqueda en un paso
+npm run test:e2e:installed:ui # Windows: interfaz, pestañas, descargas y target=_blank
+npm run test:e2e:installed:browser # Windows: permisos por origen (3 pasos)
 npm run test:e2e:network      # Windows: interruptor de red en la app empaquetada y en desktop:dev
 npm run test:e2e:python-sandbox # Chromium real; requiere npx playwright install chromium
 ```
@@ -104,7 +105,9 @@ Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds cor
 
 `test:e2e:installed` requiere Windows, una sesión de escritorio interactiva y la app instalada a partir del build actual. Arranca una copia aislada con perfil temporal, usa `https://example.com/` para el `<webview>` NATIVO y el iframe REAL cross-origin, y un fixture local para las vistas proxificadas, envía `Ctrl+F` con `SendKeys` y comprueba la búsqueda real en NATIVO (recuento y siguiente/anterior dentro del invitado), OSCURO y TEXTO. Si el ejecutable está en otra ruta, define `TERMINUS_INSTALLED_EXE`.
 
-`test:e2e:installed:ui` usa el mismo arranque aislado (perfil temporal y CDP) contra la app empaquetada y cubre la interfaz: un solo `<header>` con las pestañas y los controles de ventana dentro, el menú de configuración abierto y un cambio de tema que queda en `localStorage` y se aplica tras recargar el renderer, la búsqueda del inicio en un paso (escribir y Enter, sin botón intermedio), las pestañas con su historial y su restauración, y una descarga real desde un fixture local: el archivo se comprueba en disco y su fila en el panel. Falla si el build instalado no es el actual.
+`test:e2e:installed:ui` usa el mismo arranque aislado (perfil temporal y CDP) contra la app empaquetada y cubre la interfaz: un solo `<header>` con las pestañas y los controles de ventana dentro, el menú de configuración abierto y un cambio de tema que queda en `localStorage` y se aplica tras recargar el renderer, la búsqueda del inicio en un paso (escribir y Enter, sin botón intermedio), las pestañas con su historial y su restauración, una descarga real desde un fixture local —el archivo se comprueba en disco y su fila en el panel— y un enlace `target=_blank` pulsado dentro del invitado que abre una pestaña nueva y la deja activa. Falla si el build instalado no es el actual.
+
+`test:e2e:installed:browser` cubre los permisos por origen con tres pasos y un fixture local que llama a `Notification.requestPermission()`: con `TERMINUS_E2E_PERMISSION_ANSWER=deny` la promesa resuelve `denied` y la decisión queda guardada; al relanzar con el mismo perfil y sin gancho, recargar ya no pregunta (`Notification.permission` es `denied` y la petición resuelve `denied`); y con `allow` sobre esa decisión guardada resuelve `granted`. El gancho existe porque el diálogo nativo no se puede pulsar por CDP.
 
 `test:e2e:network` cubre la sección Red y privacidad de punta a punta: abre el menú, lee el estado que muestra y lo contrasta con lo que hace de verdad `/api/view` contra un fixture en `127.0.0.1` que levanta el propio guion, así que no necesita internet. Con la app empaquetada (`TERMINUS_BUILD_DIR`, por defecto `release/win-unpacked`) el cambio rige en la petición siguiente; con `electron .` prueba el camino de `desktop:dev`, donde el servidor es un proceso hijo: el menú guarda la decisión, el proxy y `/api/dns` siguen bloqueando, avisa de que hace falta reiniciar, y tras relanzar con el mismo perfil la decisión guardada se aplica a los dos endpoints. Falla si el menú y el proxy no coinciden. Ojo: `/api/view` responde 502 ante un destino privado rechazado, no 403. Cubre los dos endpoints de la política, `/api/view` y `/api/dns`, con el interruptor en cada posición. Con `TERMINUS_E2E_NETWORK_SKIP_DEV=1` corre solo el tramo empaquetado (8 de los 16 pasos) para aislar un runner inestable; el total esperado lo ajusta `expectedSteps()` en `scripts/e2e-suites.mjs`, que es también lo que compara el ejecutor, así que el recuento sigue cuadrando, y el log lo deja dicho con `OMITIDO desktop:dev`.
 
@@ -120,7 +123,7 @@ El workflow `CI` (`.github/workflows/ci.yml`) se dispara de cuatro formas, y sol
 | --- | --- | --- |
 | `push` | solo `main` | Veredicto del merge recién hecho, que ningún PR cubre. |
 | `pull_request` | cualquier rama | El único run de una rama de trabajo: pushear la rama no dispara nada, abrir o actualizar su PR sí. Si el PR solo toca documentación, el job `Cambios` lo detecta y omite el build de Windows. |
-| `schedule` | `main`, 03:30 UTC | Nocturno con las cuatro suites, incluida la de alemán. |
+| `schedule` | `main`, 03:30 UTC | Nocturno con las cinco suites, incluida la de alemán. |
 | `workflow_dispatch` | la rama que elijas | Manual, con `run_installed_e2e`, `adblock_offline` y `adblock_drills`. |
 
 Un tag no dispara CI: el filtro `branches` de `push` lo excluye, y el instalador de un tag lo publica el workflow `Release`.

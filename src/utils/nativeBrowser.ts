@@ -33,5 +33,15 @@ export interface NativeWebviewElement extends HTMLElement {
   stopFindInPage?(action?: 'clearSelection' | 'keepSelection' | 'activateSelection'): void;
 }
 
-export const createNativeWebview = (): NativeWebviewElement =>
-  document.createElement('webview') as NativeWebviewElement;
+/**
+ * `allowpopups` no abre nada por sí solo: sin él Electron descarta el
+ * `target=_blank`/`window.open` del invitado sin consultar al proceso principal, así
+ * que la app no puede decidir entre pestaña nueva y `deny`. Con el atributo, el
+ * aviso llega a `setWindowOpenHandler`, que siempre responde `deny` (la pestaña la
+ * abre el renderer por `terminus:browser:open-tab`).
+ */
+export const createNativeWebview = (): NativeWebviewElement => {
+  const view = document.createElement('webview') as NativeWebviewElement;
+  view.setAttribute('allowpopups', '');
+  return view;
+};
