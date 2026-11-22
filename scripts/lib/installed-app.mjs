@@ -315,6 +315,7 @@ export async function launchInstalledApp({
   return {
     process: appProcess,
     pid: appProcess.pid,
+    cdpPort,
     profileDir: resolvedProfile,
     client,
     logs,

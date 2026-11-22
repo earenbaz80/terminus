@@ -13,8 +13,9 @@
  *      porque CDP no puede pulsarlo;
  *   3. con el gancho en `allow`, sobre esa misma decisión guardada, resuelve «granted»;
  *   4. con `TERMINUS_E2E_GEO_ANSWER=allow` la ubicación queda concedida para el
- *      origen. La posición puede faltar (un runner no tiene proveedor), pero el
- *      permiso es lo que mide esta suite;
+  *      origen y devuelve una posición real: CDP fija la coordenada en el invitado
+ *      (`Emulation.setGeolocationOverride`), así un runner sin proveedor también la
+ *      entrega y el paso mide posición, no solo permiso;
  *   5. con `TERMINUS_E2E_CAM_ANSWER=allow` `getUserMedia` entrega una pista de video;
  *      la app arranca con un dispositivo falso de Chromium para que el runner, que
  *      no tiene cámara, pueda ejecutar el camino real.
@@ -33,6 +34,7 @@ import { suiteSteps } from './e2e-suites.mjs';
 import {
   assertInstalledMatchesBuild,
   captureFailureScreenshot,
+  connectCdp,
   launchInstalledApp,
   sleep,
   waitForExpression,
@@ -281,6 +283,46 @@ async function requestGeolocation(client) {
   return JSON.parse(raw);
 }
 
+/** Coordenada que entrega el paso 4; se puede cambiar desde el entorno del CI. */
+const geolocationCoordinates = () => ({
+  latitude: Number(process.env.TERMINUS_E2E_GEO_LAT || 41.3851),
+  longitude: Number(process.env.TERMINUS_E2E_GEO_LON || 2.1734),
+  accuracy: Number(process.env.TERMINUS_E2E_GEO_ACC || 100),
+});
+
+/**
+ * Fija la posición del invitado por CDP antes de pedirla.
+ *
+ * `navigator.geolocation` responde con el proveedor de Chromium, que un runner no
+ * tiene: el permiso concedido por la app no basta y `getCurrentPosition` acaba en
+ * error. `Emulation.setGeolocationOverride` sobre el target del invitado —no sobre
+ * la página de la app, que es otro target— entrega la coordenada configurada.
+ */
+async function applyGeolocationOverride(client, port, pageUrl, coordinates) {
+  const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
+    signal: AbortSignal.timeout(3000),
+  });
+  assert.equal(response.ok, true, `No se pudo listar los targets CDP (${response.status}).`);
+  const targets = await response.json();
+  // La app también se sirve en 127.0.0.1: el invitado se reconoce por su tipo, no
+  // por el origen, o el override acabaría en la página de la app.
+  const guest =
+    targets.find((target) => target.type === 'webview' && target.webSocketDebuggerUrl) ??
+    targets.find((target) => target.url === pageUrl && target.webSocketDebuggerUrl);
+  assert.ok(guest, `No hay target del invitado para ${pageUrl} en el puerto CDP ${port}.`);
+
+  const guestClient = await connectCdp(guest.webSocketDebuggerUrl, client.state);
+  try {
+    await guestClient.send('Emulation.setGeolocationOverride', coordinates);
+  } catch (error) {
+    guestClient.close();
+    throw error;
+  }
+  // Quien llama mantiene la sesión abierta hasta terminar el paso: al desconectar,
+  // Chromium revierte el override y la posición vuelve a depender del proveedor.
+  return guestClient;
+}
+
 /** Espera a que el fixture pinte el botón de cámara en un punto pulsable. */
 async function waitForCameraInput(client) {
   await waitForExpression(
@@ -397,18 +439,30 @@ async function main() {
   });
   await openFixture(app.client, fixture.pageUrl);
   await waitForGeolocationInput(app.client);
-  const geo = await requestGeolocation(app.client);
-  // La posición puede faltar —un runner no tiene proveedor de ubicación—, pero el
-  // permiso del origen es lo que esta suite mide, y tiene que haber quedado concedido.
-  assert.equal(
-    geo.state,
-    'granted',
-    `Con TERMINUS_E2E_GEO_ANSWER=allow el permiso de ubicación quedó en «${geo.state}».`,
+  const geoSession = await applyGeolocationOverride(
+    app.client,
+    app.cdpPort,
+    fixture.pageUrl,
+    geolocationCoordinates(),
   );
-  pass(
-    `geolocalización con TERMINUS_E2E_GEO_ANSWER=allow: permiso «${geo.state}»` +
-      `${geo.position ? ` y posición ${geo.position}` : ` (sin proveedor de posición, código ${geo.error})`}.`,
-  );
+  try {
+    const geo = await requestGeolocation(app.client);
+    assert.equal(
+      geo.state,
+      'granted',
+      `Con TERMINUS_E2E_GEO_ANSWER=allow el permiso de ubicación quedó en «${geo.state}».`,
+    );
+    // Confirma que también hay coordenadas reales (no solo "sin proveedor").
+    assert.ok(
+      geo.position,
+      'Con TERMINUS_E2E_GEO_ANSWER=allow debe venir posición real, no solo permiso concedido.',
+    );
+    pass(
+      `geolocalización con TERMINUS_E2E_GEO_ANSWER=allow: permiso «${geo.state}» + posición ${geo.position}`,
+    );
+  } finally {
+    geoSession.close();
+  }
   await app.stop();
 
   // Paso 5: cámara con allow
