@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { NATIVE_PARTITION_PREFIX, createNativeWebview, partitionForUrl } from './nativeBrowser';
+import {
+  NATIVE_PARTITION_PREFIX,
+  SHARED_PARTITION,
+  createNativeWebview,
+  partitionForUrl,
+} from './nativeBrowser';
 
 describe('native browser embedding', () => {
   it('gives every site its own persistent session partition', () => {
@@ -11,6 +16,11 @@ describe('native browser embedding', () => {
     expect(partitionForUrl('https://evil.test/')).not.toBe(partitionForUrl('https://example.com/'));
     expect(partitionForUrl('not a url')).toBe('persist:terminus-site-unknown');
     expect(partitionForUrl('https://example.com/').startsWith(NATIVE_PARTITION_PREFIX)).toBe(true);
+  });
+
+  it('uses one shared partition when the user enables shared cookies', () => {
+    expect(partitionForUrl('https://example.com/', true)).toBe(SHARED_PARTITION);
+    expect(partitionForUrl('https://other.test/', true)).toBe(SHARED_PARTITION);
   });
 
   // Sin `allowpopups`, Electron no llama a `setWindowOpenHandler` del invitado y un

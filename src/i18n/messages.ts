@@ -244,6 +244,21 @@ const es = {
     'Se cambia desde la aplicación de escritorio; en el navegador manda la configuración del servidor.',
   'settings.networkRestart':
     'El servidor no corre en este proceso: el cambio se aplica al reiniciar Terminus.',
+  'settings.cookieSession': 'Sesión',
+  'settings.sharedCookies': 'Compartir cookies entre sitios',
+  'settings.sharedCookiesOffHint':
+    'Aislada por sitio (recomendado): cada host guarda sus cookies por separado; un SSO que cruza dominios puede fallar.',
+  'settings.sharedCookiesOnHint':
+    'Compartida: todos los sitios usan el mismo jar, como un navegador de escritorio. Las pestañas abiertas se recargan al cambiar.',
+  'settings.browserExtensions': 'Extensiones de navegador',
+  'settings.browserExtensionsHint':
+    'Carga carpetas desempaquetadas con manifiesto MV2/MV3. Electron solo soporta un subconjunto de la API de Chrome y no hay actualizaciones automáticas.',
+  'settings.browserExtensionsDesktopOnly':
+    'Se cargan desde la aplicación de escritorio; en el navegador no hay sesiones de sitio donde instalarlas.',
+  'settings.browserExtensionAdd': 'Cargar extensión…',
+  'settings.browserExtensionRemove': 'Quitar',
+  'settings.browserExtensionEmpty': 'No hay extensiones cargadas.',
+  'settings.browserExtensionError': 'No se pudo cargar la extensión.',
   'settings.updates': 'Actualizaciones',
   'settings.updateMode': 'Cuándo buscar',
   'settings.updatesAuto': 'Automática (al iniciar)',
@@ -1033,6 +1048,21 @@ const de: Record<MessageKey, string> = {
     'Wird in der Desktop-App geändert; im Browser gilt die Serverkonfiguration.',
   'settings.networkRestart':
     'Der Server läuft nicht in diesem Prozess: die Änderung gilt nach einem Neustart von Terminus.',
+  'settings.cookieSession': 'Sitzung',
+  'settings.sharedCookies': 'Cookies zwischen Websites teilen',
+  'settings.sharedCookiesOffHint':
+    'Pro Website isoliert (empfohlen): jeder Host speichert seine Cookies getrennt; domänenübergreifendes SSO kann fehlschlagen.',
+  'settings.sharedCookiesOnHint':
+    'Geteilt: alle Websites nutzen denselben Cookie-Speicher wie ein Desktop-Browser. Offene Tabs werden beim Wechsel neu geladen.',
+  'settings.browserExtensions': 'Browser-Erweiterungen',
+  'settings.browserExtensionsHint':
+    'Lädt entpackte Ordner mit MV2/MV3-Manifest. Electron unterstützt nur einen Teil der Chrome-API; automatische Updates gibt es nicht.',
+  'settings.browserExtensionsDesktopOnly':
+    'Werden in der Desktop-App geladen; im Browser gibt es keine Website-Sitzungen, in die sie installiert werden könnten.',
+  'settings.browserExtensionAdd': 'Erweiterung laden…',
+  'settings.browserExtensionRemove': 'Entfernen',
+  'settings.browserExtensionEmpty': 'Keine Erweiterungen geladen.',
+  'settings.browserExtensionError': 'Die Erweiterung konnte nicht geladen werden.',
   'settings.updates': 'Aktualisierungen',
   'settings.updateMode': 'Wann suchen',
   'settings.updatesAuto': 'Automatisch (beim Start)',
@@ -1820,6 +1850,21 @@ const fr: Record<MessageKey, string> = {
     "Se règle depuis l'application de bureau ; dans le navigateur, la configuration du serveur décide.",
   'settings.networkRestart':
     "Le serveur ne tourne pas dans ce processus : le changement s'applique au redémarrage de Terminus.",
+  'settings.cookieSession': 'Session',
+  'settings.sharedCookies': 'Partager les cookies entre sites',
+  'settings.sharedCookiesOffHint':
+    'Isolée par site (recommandé) : chaque hôte garde ses cookies séparément ; un SSO inter-domaines peut échouer.',
+  'settings.sharedCookiesOnHint':
+    'Partagée : tous les sites utilisent le même pot de cookies, comme un navigateur de bureau. Les onglets ouverts se rechargent au changement.',
+  'settings.browserExtensions': 'Extensions de navigateur',
+  'settings.browserExtensionsHint':
+    'Charge des dossiers décompressés avec un manifeste MV2/MV3. Electron ne prend en charge qu’un sous-ensemble de l’API Chrome et sans mises à jour automatiques.',
+  'settings.browserExtensionsDesktopOnly':
+    'Se chargent depuis l’application de bureau ; dans le navigateur, il n’y a pas de sessions de site où les installer.',
+  'settings.browserExtensionAdd': 'Charger une extension…',
+  'settings.browserExtensionRemove': 'Retirer',
+  'settings.browserExtensionEmpty': 'Aucune extension chargée.',
+  'settings.browserExtensionError': 'Impossible de charger l’extension.',
   'settings.updates': 'Mises à jour',
   'settings.updateMode': 'Quand vérifier',
   'settings.updatesAuto': 'Automatique (au démarrage)',
@@ -2606,6 +2651,21 @@ const it: Record<MessageKey, string> = {
     "Si cambia dall'app desktop; nel browser vale la configurazione del server.",
   'settings.networkRestart':
     'Il server non gira in questo processo: la modifica si applica al riavvio di Terminus.',
+  'settings.cookieSession': 'Sessione',
+  'settings.sharedCookies': 'Condividi i cookie tra siti',
+  'settings.sharedCookiesOffHint':
+    'Isolata per sito (consigliato): ogni host conserva i propri cookie separatamente; un SSO tra domini può fallire.',
+  'settings.sharedCookiesOnHint':
+    'Condivisa: tutti i siti usano lo stesso archivio cookie, come un browser desktop. Le schede aperte si ricaricano al cambio.',
+  'settings.browserExtensions': 'Estensioni del browser',
+  'settings.browserExtensionsHint':
+    'Carica cartelle decompresse con manifest MV2/MV3. Electron supporta solo un sottoinsieme dell’API Chrome e non aggiorna automaticamente.',
+  'settings.browserExtensionsDesktopOnly':
+    'Si caricano dall’app desktop; nel browser non ci sono sessioni di sito in cui installarle.',
+  'settings.browserExtensionAdd': 'Carica estensione…',
+  'settings.browserExtensionRemove': 'Rimuovi',
+  'settings.browserExtensionEmpty': 'Nessuna estensione caricata.',
+  'settings.browserExtensionError': 'Impossibile caricare l’estensione.',
   'settings.updates': 'Aggiornamenti',
   'settings.updateMode': 'Quando cercare',
   'settings.updatesAuto': 'Automatica (all’avvio)',
@@ -3393,6 +3453,21 @@ const en: Record<MessageKey, string> = {
     'Changed from the desktop app; in a browser tab the server configuration decides.',
   'settings.networkRestart':
     'The server does not run in this process: the change applies when Terminus restarts.',
+  'settings.cookieSession': 'Session',
+  'settings.sharedCookies': 'Share cookies between sites',
+  'settings.sharedCookiesOffHint':
+    'Per-site isolation (recommended): each host keeps its cookies separately; cross-domain SSO may fail.',
+  'settings.sharedCookiesOnHint':
+    'Shared: all sites use the same cookie jar, like a desktop browser. Open tabs reload when switching.',
+  'settings.browserExtensions': 'Browser extensions',
+  'settings.browserExtensionsHint':
+    'Loads unpacked folders with an MV2/MV3 manifest. Electron supports only a subset of the Chrome API and does not auto-update.',
+  'settings.browserExtensionsDesktopOnly':
+    'Loaded from the desktop app; the web build has no site sessions to install them into.',
+  'settings.browserExtensionAdd': 'Load extension…',
+  'settings.browserExtensionRemove': 'Remove',
+  'settings.browserExtensionEmpty': 'No extensions loaded.',
+  'settings.browserExtensionError': 'The extension could not be loaded.',
   'settings.updates': 'Updates',
   'settings.updateMode': 'When to check',
   'settings.updatesAuto': 'Automatic (at startup)',

@@ -26,6 +26,7 @@ describe('native browser policy', () => {
   it('only embeds pages in the per-site sessions the app owns', () => {
     expect(isNativePartition('persist:terminus-site-example.com')).toBe(true);
     expect(isNativePartition('persist:terminus-site-unknown')).toBe(true);
+    expect(isNativePartition('persist:terminus-shared')).toBe(true);
     expect(isNativePartition('persist:other')).toBe(false);
     expect(isNativePartition('')).toBe(false);
     expect(isNativePartition(undefined as unknown as string)).toBe(false);

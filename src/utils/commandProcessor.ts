@@ -1190,12 +1190,19 @@ Comandos de voz recomendados:
         historyIndex: 0,
       };
 
-      ctx.setTabs((prev) => [...prev, newTab]);
+      const nextTabs = [...ctx.tabs, newTab];
+      ctx.setTabs(nextTabs);
       ctx.setActiveTabId(newId);
       logActivity('INFO', 'TABS', ctx.tc('out.newTabCreated', { kind, id: newId }));
 
       if (kind === 'web' && initialUrl !== 'about:blank') {
-        return processCommand(`goto ${initialUrl}`, ctx);
+        // `setTabs` y `setActiveTabId` son asíncronos: sin pasarle la lista y la
+        // pestaña activa nuevas, `goto` navega la pestaña que estaba delante.
+        return processCommand(`goto ${initialUrl}`, {
+          ...ctx,
+          tabs: nextTabs,
+          activeTabId: newId,
+        });
       }
 
       return {

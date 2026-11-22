@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Blocks, Download, Languages, Menu, Network, RefreshCw, ShieldCheck, Volume2, VolumeX, X } from 'lucide-react';
-import { ThemeConfig, ThemeId } from '../types';
+import { Blocks, Download, Languages, Menu, Network, Puzzle, RefreshCw, ShieldCheck, Volume2, VolumeX, X } from 'lucide-react';
+import { BrowserExtensionInfo, ThemeConfig, ThemeId } from '../types';
 import { THEMES } from '../utils/themes';
 import { themeName } from '../i18n/themes';
 import { soundEffects, SoundTheme } from '../utils/soundEffects';
@@ -14,6 +14,15 @@ import {
   readNetworkState,
   NetworkState,
 } from '../utils/networkPreference';
+import {
+  isSharedSessionEnabled,
+  setSharedSessionEnabled,
+} from '../utils/sessionPreference';
+import {
+  addBrowserExtension,
+  readBrowserExtensions,
+  removeBrowserExtension,
+} from '../utils/browserExtensions';
 import {
   applyUpdateMode,
   checkForUpdates,
@@ -66,6 +75,10 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
     appliesLive: false,
   });
   const [networkBusy, setNetworkBusy] = useState(false);
+  const [sharedSession, setSharedSession] = useState<boolean>(() => isSharedSessionEnabled());
+  const [browserExtensions, setBrowserExtensions] = useState<BrowserExtensionInfo[]>([]);
+  const [extensionsBusy, setExtensionsBusy] = useState(false);
+  const [extensionsError, setExtensionsError] = useState('');
   const [updates, setUpdates] = useState<UpdateState>({
     mode: 'auto',
     available: false,
@@ -77,6 +90,9 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
   const [updatePercent, setUpdatePercent] = useState<number | null>(null);
   const [installError, setInstallError] = useState('');
   const wavInputRef = useRef<HTMLInputElement>(null);
+  const browserExtensionsAvailable = Boolean(
+    typeof window !== 'undefined' && window.terminusDesktop?.addBrowserExtension
+  );
 
   // The download and install run in the main process, so the menu follows the
   // phases it reports instead of guessing from the click.
@@ -98,6 +114,9 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
     });
     void readNetworkState().then((state) => {
       if (active) setNetwork(state);
+    });
+    void readBrowserExtensions().then((extensions) => {
+      if (active) setBrowserExtensions(extensions);
     });
     void readUpdateState().then((state) => {
       if (active) setUpdates(state);
@@ -125,6 +144,38 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
     const state = await applyAllowPrivateNetworks(!network.allowPrivate);
     setNetwork(state);
     setNetworkBusy(false);
+  };
+
+  const toggleSharedSession = () => {
+    soundEffects.playKeyClick();
+    const next = !sharedSession;
+    setSharedSessionEnabled(next);
+    setSharedSession(next);
+  };
+
+  const loadExtension = async () => {
+    if (extensionsBusy) return;
+    soundEffects.playKeyClick();
+    setExtensionsBusy(true);
+    setExtensionsError('');
+    const result = await addBrowserExtension();
+    if (result.ok) {
+      setBrowserExtensions(result.extensions ?? (await readBrowserExtensions()));
+    } else if (!result.cancelled) {
+      setExtensionsError(t('settings.browserExtensionError'));
+    }
+    setExtensionsBusy(false);
+  };
+
+  const removeExtension = async (extension: BrowserExtensionInfo) => {
+    if (extensionsBusy) return;
+    soundEffects.playKeyClick();
+    setExtensionsBusy(true);
+    setExtensionsError('');
+    const result = await removeBrowserExtension(extension.id ?? extension.path);
+    if (result.ok) setBrowserExtensions(result.extensions ?? []);
+    else setExtensionsError(t('settings.browserExtensionError'));
+    setExtensionsBusy(false);
   };
 
   const changeUpdateMode = async (mode: UpdateMode) => {
@@ -462,6 +513,85 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
               )}
               {network.available && !network.appliesLive && (
                 <p className="mt-1 text-[9px] leading-4 opacity-45">{t('settings.networkRestart')}</p>
+              )}
+            </section>
+
+            <section
+              aria-label={t('settings.cookieSession')}
+              className="mb-3 border-t pt-2"
+              style={{ borderColor: theme.border }}
+            >
+              {sectionTitle(t('settings.cookieSession'))}
+              <button
+                type="button"
+                onClick={toggleSharedSession}
+                aria-pressed={sharedSession}
+                className="mb-1 flex w-full items-center justify-between border px-2 py-1.5 cursor-pointer"
+                style={{ borderColor: sharedSession ? theme.accent : theme.border }}
+              >
+                <span>{t('settings.sharedCookies')}</span>
+                <span style={{ color: sharedSession ? theme.accent : theme.text }}>
+                  {sharedSession ? t('settings.on') : t('settings.off')}
+                </span>
+              </button>
+              <p className="text-[9px] leading-4 opacity-45">
+                {sharedSession ? t('settings.sharedCookiesOnHint') : t('settings.sharedCookiesOffHint')}
+              </p>
+            </section>
+
+            <section
+              aria-label={t('settings.browserExtensions')}
+              className="mb-3 border-t pt-2"
+              style={{ borderColor: theme.border }}
+            >
+              {sectionTitle(t('settings.browserExtensions'))}
+              {browserExtensions.length === 0 ? (
+                <p className="mb-1 text-[9px] leading-4 opacity-45">
+                  {t('settings.browserExtensionEmpty')}
+                </p>
+              ) : (
+                <ul className="mb-1 space-y-1">
+                  {browserExtensions.map((extension) => (
+                    <li
+                      key={extension.path}
+                      className="flex items-center justify-between gap-2 border px-2 py-1"
+                      style={{ borderColor: theme.border }}
+                    >
+                      <span className="min-w-0 truncate text-[10px]">
+                        {extension.name}{' '}
+                        <span className="opacity-50">{extension.version}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void removeExtension(extension)}
+                        disabled={extensionsBusy}
+                        aria-label={`${t('settings.browserExtensionRemove')}: ${extension.name}`}
+                        className="shrink-0 border px-1.5 py-0.5 text-[9px] cursor-pointer hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-50"
+                        style={{ borderColor: theme.border }}
+                      >
+                        {t('settings.browserExtensionRemove')}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button
+                type="button"
+                onClick={() => void loadExtension()}
+                disabled={extensionsBusy || !browserExtensionsAvailable}
+                className="mb-1 flex w-full items-center justify-center gap-1.5 border px-2 py-1.5 cursor-pointer hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ borderColor: theme.border, color: theme.text }}
+              >
+                <Puzzle className="h-3 w-3 shrink-0" style={{ color: theme.accent }} />
+                {t('settings.browserExtensionAdd')}
+              </button>
+              <p className="text-[9px] leading-4 opacity-45">
+                {browserExtensionsAvailable
+                  ? t('settings.browserExtensionsHint')
+                  : t('settings.browserExtensionsDesktopOnly')}
+              </p>
+              {extensionsError && (
+                <p className="mt-1 text-[9px] leading-4 text-red-400">{extensionsError}</p>
               )}
             </section>
 

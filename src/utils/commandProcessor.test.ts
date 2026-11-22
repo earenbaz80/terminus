@@ -49,8 +49,59 @@ const makeContext = (initialTabs: BrowserTab[] = [makeTab()]) => {
   return { ctx, tab: () => tabs[0] };
 };
 
+/**
+ * Contexto con instantáneas como las de React: `setTabs` no cambia `ctx.tabs`,
+ * así que un comando que lea el contexto viejo se delata.
+ */
+const makeSnapshotContext = () => {
+  const original = makeTab();
+  let tabs: BrowserTab[] = [original];
+  const seed: Record<string, unknown> = {
+    activeTabId: 'tab_1',
+    bookmarks: [],
+    scripts: [],
+    extensions: [],
+    keybindings: [],
+    activityLogs: [],
+    metrics: {},
+    security: {},
+    fileSystem: {},
+    currentPath: '/workspace',
+    locale: 'es',
+    tc: (key: Parameters<typeof translateConsole>[1], vars?: Record<string, string | number>) =>
+      translateConsole('es', key, vars),
+    tabs: [original],
+    setActivityLogs: () => {},
+    setTabs: (next: BrowserTab[] | ((prev: BrowserTab[]) => BrowserTab[])) => {
+      tabs = typeof next === 'function' ? next(tabs) : next;
+    },
+    setActiveTabId: () => {},
+  };
+  const ctx = new Proxy(seed, {
+    get: (target, prop) => {
+      if (prop in target) return target[prop as string];
+      return () => {};
+    },
+  }) as unknown as CommandContext;
+  return { ctx, original, tabs: () => tabs };
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('tab new', () => {
+  it('navega la URL en la pestaña nueva, no en la que estaba activa', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('sin red')));
+    const { ctx, original, tabs } = makeSnapshotContext();
+
+    await processCommand('tab new https://example.com', ctx);
+
+    expect(original.url).toBe('about:blank');
+    expect(tabs()).toHaveLength(2);
+    expect(tabs()[1].url).toBe('https://example.com');
+    expect(tabs()[1].statusCode).toBe(502);
+  });
 });
 
 describe('home', () => {

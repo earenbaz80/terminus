@@ -4,7 +4,7 @@ Este documento es la fuente de verdad de lo que falta. El repositorio no usa iss
 
 - Última release publicada: `0.3.0` (tag `v0.3.0`, 12 de noviembre de 2026), con instalador, `.blockmap`, ZIP y `SHA256SUMS.txt`.
 - Estado del proyecto: rediseño de interfaz e internacionalización (PR #11) mergeados en `main`, notas de release y README alineados con los artefactos publicados, y el E2E instalado del hito 0.3.0 pasado.
-- Verificación actual: `npm run lint` correcto (tsc y eslint), `npm test` con 49 archivos y 274 pruebas, cliente y servidor compilados, instalador `0.3.0` generado y `NotSigned`.
+- Verificación actual (22 de noviembre de 2026): `npm run lint` correcto (tsc y eslint) y `npm test` con 76 archivos y 442 pruebas.
 - Cambios sin publicar desde el 15 de noviembre de 2026 (arreglos de concurrencia de búsqueda y utilidades del E2E instalado): ver `docs/release-notes-v0.3.1.md`. La última release publicada sigue siendo la `0.3.0`; `package.json` todavía no ha subido de versión.
 - No hay fechas comprometidas. Los hitos se ordenan por prioridad, no por calendario.
 
@@ -162,6 +162,8 @@ Limitaciones conocidas documentadas en el README; se abordan solo si aparece una
 - Métricas del monitor parcialmente estimadas; no sirven como telemetría.
 - REAL pasa por el forward proxy con IP fijada, pero sigue siendo una superficie de red amplia; el guard mitiga subframes y popups, no aísla.
 - Sin autenticación multiusuario.
+- Extensiones de navegador: solo desempaquetadas (MV2/MV3) y con el subconjunto de la API de Chrome que soporta Electron; no hay tienda, firma ni actualizaciones automáticas. El catálogo interno (`src/utils/extensions.ts`) sigue siendo comandos.
+- Sesión por host por defecto (ver hito 6): las cookies viven en `persist:terminus-site-<host>`; el modo compartido (`persist:terminus-shared`) es opcional desde Configuración y recarga las pestañas abiertas.
 
 ### 5. Backlog de producto — ideas, sin prioridad
 
@@ -256,7 +258,7 @@ Terminado cuando: `ui 15/15` y `ui-de 15/15` en verde, con el consumo de memoria
 
 Recuento real (20 de noviembre de 2026): cerrado **sin** el paso extra, así que `ui` y `ui-de` valen 14 en `scripts/e2e-suites.mjs` y en el resumen de `docs/e2e-installed-windows.md` (ese 14 es el paso de `target=_blank`, no este); el caso está cubierto por `src/App.tabs.test.tsx` y por la medición de abajo, no por el E2E instalado.
 
-Estado (20 de noviembre de 2026): **implementado** sin cambiar los recuentos del E2E (sigue en 13): el paso de pestañas del hito 6.5 no se agregó porque el caso ya queda cubierto por `src/App.tabs.test.tsx` y la medición de abajo. `src/App.tsx` monta una superficie por pestaña web (`data-e2e="browser-pane"` con `data-tab-id` y `data-active`); la inactiva usa `invisible pointer-events-none` —no `display:none`— para que el invitado siga adjunto al DOM. `WebBrowserSurface` gana `active`: la pestaña de fondo no responde a `Ctrl+F`, ni a `Ctrl+L`, ni al foco del inicio, y `onNativeNavigation`, `onSetViewMode`, `onSetZoom` y `onPageStatus` van atados al id de su pestaña, así una redirección en segundo plano actualiza la pestaña correcta. No hay descarte por máximo de pestañas: el costo medido es el que se documenta abajo.
+Estado (20 de noviembre de 2026): **implementado** sin cambiar los recuentos del E2E (sigue en 13): el paso de pestañas del hito 6.5 no se agregó porque el caso ya queda cubierto por `src/App.tabs.test.tsx` y la medición de abajo. `src/App.tsx` monta una superficie por pestaña web (`data-e2e="browser-pane"` con `data-tab-id` y `data-active`); la inactiva usa `invisible pointer-events-none` —no `display:none`— para que el invitado siga adjunto al DOM. `WebBrowserSurface` gana `active`: la pestaña de fondo no responde a `Ctrl+F`, ni a `Ctrl+L`, ni al foco del inicio, y `onNativeNavigation`, `onSetViewMode`, `onSetZoom` y `onPageStatus` van atados al id de su pestaña, así una redirección en segundo plano actualiza la pestaña correcta. No hay descarte por máximo de pestañas: el costo medido es el que se documenta abajo. `src/utils/tabStorage.ts` ya acepta `native` en `isPageMode`, así que una pestaña guardada en NATIVO vuelve en ese modo al recargar.
 
 Medición del 20 de noviembre de 2026, Electron del árbol de trabajo con perfil temporal, dos fixtures locales iguales (contador propio cada 250 ms y `createdAt` del documento), alternando pestaña 1 → 2 → 1:
 
@@ -282,6 +284,17 @@ Lectura: **+46,4 MB privados y +1 proceso renderer por pestaña viva**, a cambio
 #### Efecto en los recuentos del E2E
 
 Plan original: `ctrl-f` 6 → 7, `ui` 12 → 13 → 14 y `ui-de` igual que `ui`; suite nueva `browser` con 6 pasos (3 permisos + 3 descargas). De esa suite quedaron los 3 de permisos. Estado real (20 de noviembre de 2026): `ctrl-f` 7 (corrido), `ui` y `ui-de` **14** (paso 13 descargas y paso 14 `target=_blank`, corridos sobre el instalador), `browser` **3** (permisos, corrida), `network` 16. `scripts/e2e-suites.mjs` y el resumen de `docs/e2e-installed-windows.md` (`ctrl-f 7/7 · ui 14/14 · ui-de 14/14 · browser 3/3 · network 16/16`) coinciden entre sí; lo que falta para llegar a los totales del plan es el paso de 6.5. El E2E de los cinco huecos corre en el job `windows` que ya existe: no hace falta runner autoalojado, que sigue pendiente por otra razón (hito 2).
+
+#### Sesión compartida y extensiones (22 de noviembre de 2026)
+
+Implementados los dos huecos que quedaban para el uso diario fuera del `<iframe>`:
+
+- **Sesión compartida opcional**: Configuración → Sesión alterna entre `persist:terminus-site-<host>` (por defecto) y `persist:terminus-shared`; las superficies abiertas recrean su invitado al cambiar. Cubierto por `src/utils/sessionPreference.test.ts`, `src/utils/nativeBrowser.test.ts` y `electron/nativeBrowserPolicy.test.ts`.
+- **Extensiones desempaquetadas**: Configuración → Extensiones de navegador carga una carpeta con `manifest.json` MV2/MV3, la persiste en `browser-extensions.json` y la carga en cada sesión de sitio con `session.loadExtension`; quitar una extensión la retira de las sesiones abiertas. Cubierto por `electron/browserExtensionStore.test.ts`.
+- **Pestañas NATIVO restauradas**: `tabStorage` acepta `native`, así que una pestaña guardada vuelve a su motor (`src/utils/tabStorage.test.ts`).
+- **`tab new <url>` corregido**: el comando le pasa a `goto` la lista y la pestaña activa nuevas, así que ya no navega la pestaña anterior (`src/utils/commandProcessor.test.ts`). Lo encontró la verificación en la app real, no la suite unitaria.
+
+Sigue fuera: firma Authenticode (decisión cerrada), navegación de nivel superior en el modo web (por diseño no ejecuta JS de terceros) y una tienda de extensiones.
 
 #### Decisiones abiertas antes de empezar
 

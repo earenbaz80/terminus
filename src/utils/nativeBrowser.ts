@@ -9,8 +9,16 @@
 
 export const NATIVE_PARTITION_PREFIX = 'persist:terminus-site-';
 
-/** Cada sitio recibe su propia sesión persistente: cookies y storage no se mezclan. */
-export const partitionForUrl = (value: string): string => {
+/** Sesión única para todos los sitios cuando el usuario elige compartir cookies. */
+export const SHARED_PARTITION = 'persist:terminus-shared';
+
+/**
+ * Cada sitio recibe su propia sesión persistente por defecto: cookies y storage
+ * no se mezclan. Con `shared`, todos los sitios usan el mismo jar para que un
+ * SSO que cruza dominios funcione como en un navegador de escritorio.
+ */
+export const partitionForUrl = (value: string, shared = false): string => {
+  if (shared) return SHARED_PARTITION;
   let host: string;
   try {
     host = new URL(String(value)).hostname.toLowerCase();

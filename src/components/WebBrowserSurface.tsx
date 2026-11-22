@@ -47,6 +47,7 @@ import {
   partitionForUrl,
   NativeWebviewElement,
 } from '../utils/nativeBrowser';
+import { SHARED_SESSION_EVENT, isSharedSessionEnabled } from '../utils/sessionPreference';
 
 /** App forwards the standard Ctrl/Cmd+L browser shortcut through this event. */
 export const FOCUS_ADDRESS_EVENT = 'termbrowser:focus-address';
@@ -297,6 +298,8 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [draftCommand, setDraftCommand] = useState('');
   const [mode, setMode] = useState<PageMode>('real');
+  // Cookies aisladas por sitio (por defecto) o compartidas para un SSO real.
+  const [sharedSession, setSharedSession] = useState<boolean>(() => isSharedSessionEnabled());
   const [savedModes, setSavedModes] = useState<Record<string, PageMode>>(() => loadModeMap());
   const [savedOpen, setSavedOpen] = useState(false);
   const [commandsOpen, setCommandsOpen] = useState(false);
@@ -392,6 +395,14 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
   useEffect(() => {
     setContextMenu(null);
   }, [mode]);
+
+  // El modo de sesión se cambia desde Configuración: las superficies abiertas
+  // recrean su invitado con la partición nueva.
+  useEffect(() => {
+    const sync = () => setSharedSession(isSharedSessionEnabled());
+    window.addEventListener(SHARED_SESSION_EVENT, sync);
+    return () => window.removeEventListener(SHARED_SESSION_EVENT, sync);
+  }, []);
 
   // The page lives in an iframe, so React never sees its right-click. Electron forwards
   // subframe context menus here with viewport coordinates.
@@ -890,7 +901,7 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
 
     const view = createNativeWebview();
     view.className = 'h-full w-full';
-    view.setAttribute('partition', partitionForUrl(tab.url));
+    view.setAttribute('partition', partitionForUrl(tab.url, sharedSession));
     view.setAttribute('src', tab.url);
     nativeViewRef.current = view;
     nativeReadyRef.current = false;
@@ -942,10 +953,10 @@ export const WebBrowserSurface: React.FC<WebBrowserSurfaceProps> = ({
       nativeReadyRef.current = false;
       pendingNativeUrlRef.current = null;
     };
-    // La página sobrevive a su propia navegación: solo se recrea con otra pestaña
-    // o al salir del modo NATIVO.
+    // La página sobrevive a su propia navegación: solo se recrea con otra pestaña,
+    // al cambiar el modo de sesión o al salir del modo NATIVO.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nativeViewActive, tab?.id]);
+  }, [nativeViewActive, tab?.id, sharedSession]);
 
   // El estado de React sigue mandando: `goto`, historial y enlaces externos
   // cambian la URL de la pestaña y la página la carga en su sitio.
