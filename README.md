@@ -99,7 +99,7 @@ npm run test:e2e:network      # Windows: interruptor de red en la app empaquetad
 npm run test:e2e:python-sandbox # Chromium real; requiere npx playwright install chromium
 ```
 
-Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 76 archivos y 442 pruebas.
+Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 77 archivos y 445 pruebas.
 
 `test:e2e:adblock` arranca `release/win-unpacked/Terminus.exe` con Playwright, sirve un fixture local de anuncios y comprueba el bloqueo de red y de popups. Después navega a `https://example.com/` para verificar que los cosméticos de EasyList se aplican al iframe proxificado; el fixture local no sirve para cosméticos porque `127.0.0.1` no tiene eTLD. Requiere haber ejecutado `npm run desktop:dir` antes.
 
@@ -177,7 +177,7 @@ El CI de push solo corre en `main` y no en tags, así que un tag no compila dos 
 ### Limitaciones de seguridad conocidas
 
 - No hay autenticación multiusuario: el modelo de confianza es una sola persona en su equipo.
-- Las extensiones de navegador son desempaquetadas y de confianza: se cargan desde una carpeta con `session.loadExtension`, sin tienda ni actualizaciones automáticas, y Electron solo implementa un subconjunto de la API de Chrome. Las «extensiones» internas del intérprete siguen siendo paquetes de comandos.
+- Las extensiones de navegador son desempaquetadas y de confianza: se cargan desde una carpeta con `session.loadExtension` solo en las sesiones de sitio, nunca en `session.defaultSession` (la UI de Terminus), sin tienda ni actualizaciones automáticas, y Electron solo implementa un subconjunto de la API de Chrome. Las «extensiones» internas del intérprete siguen siendo paquetes de comandos.
 - La vista `REAL` directa es un `<iframe>`: depende de que el sitio permita el encuadre y no sustituye la navegación de nivel superior; `OSCURO` y `TEXTO` no ejecutan JavaScript.
 - La sesión es por host por defecto: sin el modo compartido, no hay un jar de cookies entre dominios y un flujo SSO que cruza sitios puede requerir volver a iniciar sesión.
 - El terminal nativo y los comandos que ejecutes en él conservan el acceso a red del usuario; la política de red privada aplica al proxy y a las APIs del navegador.

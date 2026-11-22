@@ -4,7 +4,7 @@ Este documento es la fuente de verdad de lo que falta. El repositorio no usa iss
 
 - Última release publicada: `0.3.0` (tag `v0.3.0`, 12 de noviembre de 2026), con instalador, `.blockmap`, ZIP y `SHA256SUMS.txt`.
 - Estado del proyecto: rediseño de interfaz e internacionalización (PR #11) mergeados en `main`, notas de release y README alineados con los artefactos publicados, y el E2E instalado del hito 0.3.0 pasado.
-- Verificación actual (22 de noviembre de 2026): `npm run lint` correcto (tsc y eslint) y `npm test` con 76 archivos y 442 pruebas.
+- Verificación actual (22 de noviembre de 2026): `npm run lint` correcto (tsc y eslint) y `npm test` con 77 archivos y 445 pruebas.
 - Cambios sin publicar desde el 15 de noviembre de 2026 (arreglos de concurrencia de búsqueda y utilidades del E2E instalado): ver `docs/release-notes-v0.3.1.md`. La última release publicada sigue siendo la `0.3.0`; `package.json` todavía no ha subido de versión.
 - No hay fechas comprometidas. Los hitos se ordenan por prioridad, no por calendario.
 
@@ -290,7 +290,7 @@ Plan original: `ctrl-f` 6 → 7, `ui` 12 → 13 → 14 y `ui-de` igual que `ui`;
 Implementados los dos huecos que quedaban para el uso diario fuera del `<iframe>`:
 
 - **Sesión compartida opcional**: Configuración → Sesión alterna entre `persist:terminus-site-<host>` (por defecto) y `persist:terminus-shared`; las superficies abiertas recrean su invitado al cambiar. Cubierto por `src/utils/sessionPreference.test.ts`, `src/utils/nativeBrowser.test.ts` y `electron/nativeBrowserPolicy.test.ts`.
-- **Extensiones desempaquetadas**: Configuración → Extensiones de navegador carga una carpeta con `manifest.json` MV2/MV3, la persiste en `browser-extensions.json` y la carga en cada sesión de sitio con `session.loadExtension`; quitar una extensión la retira de las sesiones abiertas. Cubierto por `electron/browserExtensionStore.test.ts`.
+- **Extensiones desempaquetadas**: Configuración → Extensiones de navegador carga una carpeta con `manifest.json` MV2/MV3, la persiste en `browser-extensions.json` y la carga con `session.loadExtension` solo en las sesiones de sitio; `session.defaultSession` (la UI de Terminus) queda fuera para que un content script con `<all_urls>` no pueda inyectarse en la app. Quitar una extensión la retira de las sesiones abiertas. Cubierto por `electron/browserExtensionStore.test.ts` y `electron/browserExtensionSessions.test.ts`.
 - **Pestañas NATIVO restauradas**: `tabStorage` acepta `native`, así que una pestaña guardada vuelve a su motor (`src/utils/tabStorage.test.ts`).
 - **`tab new <url>` corregido**: el comando le pasa a `goto` la lista y la pestaña activa nuevas, así que ya no navega la pestaña anterior (`src/utils/commandProcessor.test.ts`). Lo encontró la verificación en la app real, no la suite unitaria.
 

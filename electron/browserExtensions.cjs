@@ -16,6 +16,7 @@ const {
   readManifest,
   saveStore,
 } = require('./browserExtensionStore.cjs');
+const { siteSessionsForExtensions } = require('./browserExtensionSessions.cjs');
 
 let entries = null;
 // Qué rutas ya se cargaron en cada sesión, para no repetir `loadExtension`.
@@ -45,14 +46,17 @@ const listBrowserExtensions = () =>
   }));
 
 const sessionsToConfigure = () => {
-  const list = [session.defaultSession];
   try {
     const { listNativeSessions } = require('./nativeBrowser.cjs');
-    list.push(...listNativeSessions());
+    // La sesión por defecto sirve la UI de Terminus: un content script con
+    // `<all_urls>` no puede inyectarse ahí, solo en las sesiones de sitio.
+    return siteSessionsForExtensions({
+      defaultSession: session.defaultSession,
+      siteSessions: listNativeSessions(),
+    });
   } catch {
-    // Sin invitados todavía: la sesión por defecto alcanza.
+    return [];
   }
-  return [...new Set(list)];
 };
 
 /** Carga las extensiones guardadas en una sesión; repetir la llamada no duplica. */
