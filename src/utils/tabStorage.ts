@@ -18,7 +18,8 @@ export interface SavedSession {
 
 const isTabKind = (value: unknown): value is TabKind => value === 'web' || value === 'terminal';
 
-const isPageMode = (value: unknown): value is PageMode => value === 'real' || value === 'dark' || value === 'text';
+const isPageMode = (value: unknown): value is PageMode =>
+  value === 'real' || value === 'dark' || value === 'text' || value === 'native';
 
 function normalizeSearch(value: any): TerminusSearchState | undefined {
   if (!value || typeof value.query !== 'string' || !value.query.trim()) return undefined;

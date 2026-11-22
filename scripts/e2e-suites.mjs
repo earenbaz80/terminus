@@ -47,14 +47,17 @@ export const E2E_SUITES = [
     script: 'test:e2e:installed:ui',
     log: 'e2e-installed-ui-de.log',
     locale: 'de',
-    steps: 14,
+    // Es la misma suite que `ui` con TERMINUS_E2E_LOCALE=de: mismo guion, mismo
+    // total. Cuando `ui` sumó el paso 6.5, este número se quedó en 14 y el E2E
+    // solo lo delataba cuando la corrida llegaba hasta el final (run 44907624875).
+    steps: 15,
   },
   {
     label: 'browser',
     script: 'test:e2e:installed:browser',
     log: 'e2e-installed-browser.log',
     locale: '',
-    steps: 5,
+    steps: 6,
   },
   // No usa el instalador: el build de `release/win-unpacked` y el árbol de trabajo.
   {

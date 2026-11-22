@@ -8,6 +8,9 @@
 /** Prefijo de las sesiones por sitio que crea la superficie de la app. */
 const NATIVE_PARTITION_PREFIX = 'persist:terminus-site-';
 
+/** Sesión compartida opcional: un solo jar de cookies para todos los sitios. */
+const SHARED_PARTITION = 'persist:terminus-shared';
+
 const isWebUrl = (value) => {
   try {
     const parsed = new URL(String(value));
@@ -25,9 +28,10 @@ const isWebUrl = (value) => {
 const shouldOpenInTab = (value, isBlockedUrl = () => false) =>
   isWebUrl(value) && !isBlockedUrl(value);
 
-/** La ventana solo incrusta páginas en nuestras sesiones por sitio, nada más. */
+/** La ventana solo incrusta páginas en nuestras sesiones, nada más. */
 const isNativePartition = (value) =>
-  typeof value === 'string' && value.startsWith(NATIVE_PARTITION_PREFIX);
+  typeof value === 'string' &&
+  (value.startsWith(NATIVE_PARTITION_PREFIX) || value === SHARED_PARTITION);
 
 /**
  * Los sitios deben ver a un Chrome normal, no la identidad de la app: algunas
@@ -50,4 +54,5 @@ module.exports = {
   isNativePartition,
   chromeUserAgent,
   NATIVE_PARTITION_PREFIX,
+  SHARED_PARTITION,
 };

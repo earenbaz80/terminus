@@ -248,6 +248,22 @@ export interface NetworkPolicyState {
   appliesLive?: boolean;
 }
 
+/** Unpacked browser extension loaded into the guest sessions. */
+export interface BrowserExtensionInfo {
+  path: string;
+  id?: string;
+  name: string;
+  version: string;
+  manifestVersion: number;
+}
+
+export interface BrowserExtensionResult {
+  ok: boolean;
+  cancelled?: boolean;
+  error?: string;
+  extensions?: BrowserExtensionInfo[];
+}
+
 /** Secure bridge exposed by the Electron preload script (absent in a normal browser tab). */
 export interface TerminusDesktopApi {
   platform: string;
@@ -269,6 +285,10 @@ export interface TerminusDesktopApi {
   /** Private-network policy owned by the Electron main process. */
   getNetworkState?(): Promise<NetworkPolicyState>;
   setAllowPrivateNetworks?(allowPrivate: boolean): Promise<NetworkPolicyState>;
+  /** Unpacked browser extensions loaded into every guest session. */
+  listBrowserExtensions?(): Promise<BrowserExtensionInfo[]>;
+  addBrowserExtension?(): Promise<BrowserExtensionResult>;
+  removeBrowserExtension?(id: string): Promise<BrowserExtensionResult>;
   /** Downloads started inside the native browser sessions. */
   listDownloads?(): Promise<DownloadEntry[]>;
   cancelDownload?(id: string): Promise<boolean>;

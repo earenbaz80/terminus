@@ -81,6 +81,9 @@ contextBridge.exposeInMainWorld('terminusDesktop', {
   getNetworkState: () => ipcRenderer.invoke('terminus:network:state'),
   setAllowPrivateNetworks: (allowPrivate) =>
     ipcRenderer.invoke('terminus:network:set-allow-private', allowPrivate),
+  listBrowserExtensions: () => ipcRenderer.invoke('terminus:extensions:list'),
+  addBrowserExtension: () => ipcRenderer.invoke('terminus:extensions:add'),
+  removeBrowserExtension: (id) => ipcRenderer.invoke('terminus:extensions:remove', id),
   getUpdateState: () => ipcRenderer.invoke('terminus:updates:state'),
   setUpdateMode: (mode) => ipcRenderer.invoke('terminus:updates:set-mode', mode),
   checkForUpdates: () => ipcRenderer.invoke('terminus:updates:check'),

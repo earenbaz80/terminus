@@ -6,7 +6,7 @@ El estado del proyecto, los pendientes y las decisiones cerradas están en [ROAD
 
 ## Características
 
-- **Dos superficies**: navegador web real y terminal interactiva, con pestañas independientes.
+- **Dos superficies**: navegador web con motor Chromium (`NATIVO`, solo en la app de escritorio) y terminal interactiva, con pestañas independientes.
 - **Pestañas vivas**: cada pestaña web conserva su página al cambiar de pestaña (una superficie montada por pestaña), así el audio, las descargas en curso y lo escrito en un formulario sobreviven al cambio; el costo medido está en la medición del hito 6.5 de [ROADMAP.md](ROADMAP.md).
 - **Pestañas de verdad**: un enlace con `target=_blank` o `window.open` abre una pestaña nueva de Terminus, activa, en vez de recargar la página actual; los esquemas que no son web y los enlaces que bloquea el adblock no ganan pestaña.
 - **Permisos por sitio**: cámara y micrófono, ubicación, notificaciones y portapapeles se preguntan una vez por origen con un diálogo nativo y la respuesta se recuerda en `permissions.json`; el resto se niega sin molestar.
@@ -15,12 +15,12 @@ El estado del proyecto, los pendientes y las decisiones cerradas están en [ROAD
 - **Navegador**: barra de direcciones con sugerencias de marcadores e historial global, historial por pestaña, favoritos, indicador HTTPS/HTTP y descarga de la página.
 - **Descargas reales**: los enlaces con `Content-Disposition` de los sitios llegan al proceso principal, que abre el diálogo de guardado, escribe en la carpeta elegida y publica progreso en un panel de la barra, con cancelar y «ver en carpeta».
 - **Búsqueda web desde el inicio**: el campo de la pantalla de inicio busca directamente, sin abrir otra pantalla antes; las sugerencias son clicables y los resultados aparecen en Terminus Search.
-- **Vistas de página**: `REAL` (iframe directo cuando el sitio lo permite), `OSCURO` (proxy con hoja retro) y `TEXTO` (extracción legible).
+- **Vistas de página**: `NATIVO` (solo en Electron: la página real en un `<webview>` de Chromium), `REAL` (iframe directo y cross-origin **solo si el sitio se deja enmarcar**; no es navegación de nivel superior), `OSCURO` (proxy con hoja retro) y `TEXTO` (extracción legible). Un sitio con `X-Frame-Options` o `frame-ancestors` restrictivos no puede usar `REAL` y cae a `OSCURO`/`TEXTO`, que **no ejecutan JavaScript** por la decisión de seguridad del proxy.
 - **Búsqueda en página** con `Ctrl+F` en las cuatro vistas; en Electron un atajo global la captura incluso con el foco dentro de un iframe REAL cross-origin o del `<webview>` NATIVO. En NATIVO busca Chromium dentro de la página (`findInPage`), con resaltado, recuento `n/m` y saltos con Enter, `Shift+Enter` o los botones siguiente/anterior; en OSCURO y TEXTO la busca el documento proxificado. Solo la vista REAL directa pide cambiar de modo. **Zoom por pestaña** con `Ctrl++`, `Ctrl+-` y `Ctrl+0`.
 - **Terminal**: intérprete interno, PTY real con CMD/PowerShell/Bash en Electron, comandos de navegación, archivos virtuales y workspace local.
-- **Panel de archivos**, monitor de recursos, scripts, extensiones, atajos, ayuda y bóveda cifrada.
+- **Panel de archivos**, monitor de recursos, scripts, **extensiones internas** (paquetes de comandos como `scrape`, `dns` o `hash`) y **extensiones de navegador desempaquetadas** (MV2/MV3, con el subconjunto de la API de Chrome que soporta Electron), atajos, ayuda y bóveda cifrada.
 - **Interfaz en cinco idiomas**: español, alemán, francés, italiano e inglés, con cambio en vivo desde Configuración y español como referencia.
-- **Persistencia local** de tema, sesión, pestañas, marcadores, zoom e historial. No hay backend remoto de usuario.
+- **Persistencia local** de tema, pestañas, marcadores, zoom e historial, más la **sesión por sitio**: cada host guarda cookies y storage en su propia partición (`persist:terminus-site-<host>`), así que dos hosts distintos no comparten sesión y un login o SSO que salta de dominio no se propaga solo. En Configuración → Sesión se puede cambiar a un jar compartido (`persist:terminus-shared`) para que el SSO funcione como en un navegador de escritorio; las pestañas abiertas se recargan al cambiar. No hay backend remoto de usuario.
 
 ## Requisitos
 
@@ -94,12 +94,12 @@ npm run build:server
 npm run test:e2e:adblock     # Electron empaquetado: red, popups y cosméticos
 npm run test:e2e:installed    # Windows: Ctrl+F en NATIVO, OSCURO y TEXTO
 npm run test:e2e:installed:ui # Windows: interfaz, pestañas, descargas y target=_blank
-npm run test:e2e:installed:browser # Windows: permisos por origen (3 pasos)
+npm run test:e2e:installed:browser # Windows: permisos por origen y extensiones (6 pasos)
 npm run test:e2e:network      # Windows: interruptor de red en la app empaquetada y en desktop:dev
 npm run test:e2e:python-sandbox # Chromium real; requiere npx playwright install chromium
 ```
 
-Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 51 archivos y 296 pruebas.
+Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds correctos. Referencia actual: `npm test` con 77 archivos y 445 pruebas.
 
 `test:e2e:adblock` arranca `release/win-unpacked/Terminus.exe` con Playwright, sirve un fixture local de anuncios y comprueba el bloqueo de red y de popups. Después navega a `https://example.com/` para verificar que los cosméticos de EasyList se aplican al iframe proxificado; el fixture local no sirve para cosméticos porque `127.0.0.1` no tiene eTLD. Requiere haber ejecutado `npm run desktop:dir` antes.
 
@@ -107,7 +107,7 @@ Estado esperado: typecheck limpio, pruebas de unidad en verde y ambos builds cor
 
 `test:e2e:installed:ui` usa el mismo arranque aislado (perfil temporal y CDP) contra la app empaquetada y cubre la interfaz: un solo `<header>` con las pestañas y los controles de ventana dentro, el menú de configuración abierto y un cambio de tema que queda en `localStorage` y se aplica tras recargar el renderer, la búsqueda del inicio en un paso (escribir y Enter, sin botón intermedio), las pestañas con su historial y su restauración, una descarga real desde un fixture local —el archivo se comprueba en disco y su fila en el panel— y un enlace `target=_blank` pulsado dentro del invitado que abre una pestaña nueva y la deja activa. Falla si el build instalado no es el actual.
 
-`test:e2e:installed:browser` cubre los permisos por origen con tres pasos y un fixture local que llama a `Notification.requestPermission()`: con `TERMINUS_E2E_PERMISSION_ANSWER=deny` la promesa resuelve `denied` y la decisión queda guardada; al relanzar con el mismo perfil y sin gancho, recargar ya no pregunta (`Notification.permission` es `denied` y la petición resuelve `denied`); y con `allow` sobre esa decisión guardada resuelve `granted`. El gancho existe porque el diálogo nativo no se puede pulsar por CDP.
+`test:e2e:installed:browser` cubre los permisos por origen y el aislamiento de extensiones con seis pasos y un fixture local que llama a `Notification.requestPermission()`: con `TERMINUS_E2E_PERMISSION_ANSWER=deny` la promesa resuelve `denied` y la decisión queda guardada; al relanzar con el mismo perfil y sin gancho, recargar ya no pregunta (`Notification.permission` es `denied` y la petición resuelve `denied`); y con `allow` sobre esa decisión guardada resuelve `granted`. Los pasos 4 y 5 prueban geolocalización y cámara con `TERMINUS_E2E_GEO_ANSWER` y `TERMINUS_E2E_CAM_ANSWER`; el paso 6 da de alta una extensión MV3 con `<all_urls>` por el mismo IPC que el panel (con `TERMINUS_E2E_EXTENSION_DIR` para evitar el diálogo nativo) y exige que cargue en el invitado sin aparecer en el documento de la UI de Terminus tras recargarla. El gancho existe porque el diálogo nativo no se puede pulsar por CDP.
 
 `test:e2e:network` cubre la sección Red y privacidad de punta a punta: abre el menú, lee el estado que muestra y lo contrasta con lo que hace de verdad `/api/view` contra un fixture en `127.0.0.1` que levanta el propio guion, así que no necesita internet. Con la app empaquetada (`TERMINUS_BUILD_DIR`, por defecto `release/win-unpacked`) el cambio rige en la petición siguiente; con `electron .` prueba el camino de `desktop:dev`, donde el servidor es un proceso hijo: el menú guarda la decisión, el proxy y `/api/dns` siguen bloqueando, avisa de que hace falta reiniciar, y tras relanzar con el mismo perfil la decisión guardada se aplica a los dos endpoints. Falla si el menú y el proxy no coinciden. Ojo: `/api/view` responde 502 ante un destino privado rechazado, no 403. Cubre los dos endpoints de la política, `/api/view` y `/api/dns`, con el interruptor en cada posición. Con `TERMINUS_E2E_NETWORK_SKIP_DEV=1` corre solo el tramo empaquetado (8 de los 16 pasos) para aislar un runner inestable; el total esperado lo ajusta `expectedSteps()` en `scripts/e2e-suites.mjs`, que es también lo que compara el ejecutor, así que el recuento sigue cuadrando, y el log lo deja dicho con `OMITIDO desktop:dev`.
 
@@ -177,6 +177,9 @@ El CI de push solo corre en `main` y no en tags, así que un tag no compila dos 
 ### Limitaciones de seguridad conocidas
 
 - No hay autenticación multiusuario: el modelo de confianza es una sola persona en su equipo.
+- Las extensiones de navegador son desempaquetadas y de confianza: se cargan desde una carpeta con `session.loadExtension` solo en las sesiones de sitio, nunca en `session.defaultSession` (la UI de Terminus), sin tienda ni actualizaciones automáticas, y Electron solo implementa un subconjunto de la API de Chrome. Las «extensiones» internas del intérprete siguen siendo paquetes de comandos.
+- La vista `REAL` directa es un `<iframe>`: depende de que el sitio permita el encuadre y no sustituye la navegación de nivel superior; `OSCURO` y `TEXTO` no ejecutan JavaScript.
+- La sesión es por host por defecto: sin el modo compartido, no hay un jar de cookies entre dominios y un flujo SSO que cruza sitios puede requerir volver a iniciar sesión.
 - El terminal nativo y los comandos que ejecutes en él conservan el acceso a red del usuario; la política de red privada aplica al proxy y a las APIs del navegador.
 - La CSP mantiene `style-src 'unsafe-inline'` por los estilos de los temas; los scripts inline quedan bloqueados en producción.
 - La sanitización HTML es deliberadamente conservadora, pero no sustituye un navegador aislado para contenido hostil. Dos detalles quedan como están: las URLs `data:` dentro de `srcset` de imágenes y el CSS de los atributos `style` no se reescriben. Ninguno ejecuta código en Chromium (un `data:` en `srcset` no se decodifica como documento y `url(javascript:)` no corre en CSS), y la CSP y el `sandbox` del iframe son el límite real; `src/utils/serverSecurity.hostile.test.ts` fija ese comportamiento para que un endurecimiento futuro lo delate.

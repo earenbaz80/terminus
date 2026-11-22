@@ -17,6 +17,12 @@ const {
 } = require('./updates.cjs');
 const { startForwardProxy } = require('./forwardProxy.cjs');
 const { registerNativeGuests, listNativeSessions } = require('./nativeBrowser.cjs');
+const {
+  addBrowserExtension,
+  listBrowserExtensions,
+  loadBrowserExtensionsIntoSession,
+  removeBrowserExtension,
+} = require('./browserExtensions.cjs');
 const { isWebUrl, isNativePartition } = require('./nativeBrowserPolicy.cjs');
 const {
   DOWNLOAD_DIR_ENV,
@@ -29,6 +35,14 @@ const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
 const path = require('node:path');
+
+// El E2E de permisos pide cámara en un runner que no tiene ninguna: con este gancho
+// Chromium entrega un dispositivo falso y `getUserMedia` puede concederse. El permiso
+// sigue pasando por el manejador de la app, así que la prueba mide la decisión de
+// Terminus y no se salta el diálogo con `--use-fake-ui-for-media-stream`.
+if (process.env.TERMINUS_E2E_CAM_ANSWER) {
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+}
 
 const APP_ROOT = app.getAppPath();
 const APP_ORIGIN_FALLBACK = 'http://127.0.0.1';
@@ -1563,6 +1577,7 @@ function registerWindowIpc() {
     onSessionCreated: (siteSession) => {
       // Cada sesión de sitio descarga con el mismo diálogo y la misma lista.
       watchDownloadSession(siteSession);
+      void loadBrowserExtensionsIntoSession(siteSession);
       if (!adblockEnabled) return undefined;
       if (adblockBlocker) {
         enableNetworkBlockingInSession(siteSession, adblockBlocker);
@@ -1744,6 +1759,34 @@ function registerWindowIpc() {
       await persistNetworkState();
     }
     return networkStateSnapshot();
+  });
+
+  ipcMain.handle('terminus:extensions:list', (event) =>
+    windowForEvent(event) ? listBrowserExtensions() : []
+  );
+
+  ipcMain.handle('terminus:extensions:add', async (event) => {
+    const win = windowForEvent(event);
+    if (!win) return { ok: false, error: 'unauthorized' };
+    // Gancho del E2E: el diálogo nativo no se puede pulsar por CDP. La ruta
+    // entra por el mismo `addBrowserExtension` que el panel.
+    const preset = process.env.TERMINUS_E2E_EXTENSION_DIR;
+    if (preset) return addBrowserExtension(preset);
+    const spanish = String(app.getLocale?.() || 'en').toLowerCase().startsWith('es');
+    const picked = await dialog.showOpenDialog(win, {
+      title: spanish ? 'Cargar extensión de navegador' : 'Load browser extension',
+      buttonLabel: spanish ? 'Cargar' : 'Load',
+      properties: ['openDirectory'],
+    });
+    if (picked.canceled || !picked.filePaths?.[0]) return { ok: false, cancelled: true };
+    return addBrowserExtension(picked.filePaths[0]);
+  });
+
+  ipcMain.handle('terminus:extensions:remove', async (event, id) => {
+    if (!windowForEvent(event) || typeof id !== 'string' || !id) {
+      return { ok: false, error: 'unauthorized' };
+    }
+    return removeBrowserExtension(id);
   });
 }
 
