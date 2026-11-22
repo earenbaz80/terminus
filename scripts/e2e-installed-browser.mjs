@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Suite `browser` del E2E instalado: permisos por origen.
+ * Suite `browser` del E2E instalado: permisos por origen y aislamiento de extensiones.
  *
- * Cinco pasos sobre un fixture local que pide notificaciones, ubicación y cámara:
+ * Seis pasos sobre un fixture local que pide notificaciones, ubicación y cámara:
  *
  *   1. con `TERMINUS_E2E_PERMISSION_ANSWER=deny` la promesa de notificaciones resuelve
  *      «denied» y la respuesta queda guardada en `permissions.json`, igual que si se
@@ -19,6 +19,10 @@
  *   5. con `TERMINUS_E2E_CAM_ANSWER=allow` `getUserMedia` entrega una pista de video;
  *      la app arranca con un dispositivo falso de Chromium para que el runner, que
  *      no tiene cámara, pueda ejecutar el camino real.
+ *   6. una extensión MV3 con `<all_urls>` se da de alta por el mismo IPC que el panel,
+ *      carga en el invitado, y tras recargar la UI el documento de la app no lleva su
+ *      marca: la UI vive en `session.defaultSession` y las extensiones solo entran
+ *      en sesiones de sitio. `TERMINUS_E2E_EXTENSION_DIR` evita el diálogo nativo.
  *
  * El perfil se conserva entre los tres arranques: lo que se mide es la persistencia
  * del almacén por origen, no solo el cableado del canal.
@@ -53,6 +57,7 @@ import { typeInAddressBar } from './lib/e2e-address-bar.mjs';
 const ACTIVE_PANE = '[data-e2e="browser-pane"][data-active="true"]';
 const ADDRESS_SELECTOR = `${ACTIVE_PANE} input[aria-controls="terminus-address-suggestions"]`;
 const GUEST_SELECTOR = `${ACTIVE_PANE} webview`;
+const EXTENSION_MARKER = 'data-terminus-extension';
 
 /** Ejecuta código dentro del invitado y devuelve lo que resuelva la promesa. */
 const guestExpression = (code) => `(() => {
@@ -81,6 +86,25 @@ const fixtureClickPoint = (id) => `(() => {
   if (!view || typeof view.executeJavaScript !== 'function') return Promise.resolve(null);
   return Promise.resolve(view.executeJavaScript(${JSON.stringify(fixtureClickScript(id))}, true));
 })()`;
+
+/** Extensión MV3 mínima: un content script en `<all_urls>` que marca el documento. */
+function makeExtensionFixture() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'terminus-e2e-extension-'));
+  fs.writeFileSync(
+    path.join(dir, 'manifest.json'),
+    JSON.stringify({
+      manifest_version: 3,
+      name: 'Terminus E2E extension isolation',
+      version: '1.0.0',
+      content_scripts: [{ matches: ['<all_urls>'], js: ['content.js'], run_at: 'document_idle' }],
+    }),
+  );
+  fs.writeFileSync(
+    path.join(dir, 'content.js'),
+    `document.documentElement.setAttribute('${EXTENSION_MARKER}', 'loaded');`,
+  );
+  return dir;
+}
 
 /** Fixture local: un botón que pide permiso de notificaciones y guarda la respuesta. */
 function startPermissionFixture() {
@@ -189,6 +213,7 @@ function pass(message) {
 let app = null;
 let fixture = null;
 let profileDir = '';
+let extensionDir = '';
 
 /**
  * Navega el panel activo por su barra de direcciones, como cualquier comando: al
@@ -373,10 +398,14 @@ async function main() {
 
   fixture = await startPermissionFixture();
   profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'terminus-e2e-browser-'));
+  extensionDir = makeExtensionFixture();
   const baseEnv = {
     // El fixture vive en 127.0.0.1; la política de red no debe estorbar.
     TERMINUS_BLOCK_PRIVATE: '0',
     TERMINUS_NETWORK_POLICY: 'local',
+    // Evita el diálogo nativo: el paso 6 da de alta la extensión por el IPC
+    // del panel, no sembrando el catálogo, para ejercitar `sessionsToConfigure`.
+    TERMINUS_E2E_EXTENSION_DIR: extensionDir,
   };
 
   // Paso 1: el gancho responde como el diálogo y guarda la decisión.
@@ -483,6 +512,48 @@ async function main() {
   pass(
     `cámara con TERMINUS_E2E_CAM_ANSWER=allow: getUserMedia entrega ${cam.tracks} pista(s) de video.`,
   );
+
+  // Paso 6: el alta real (mismo IPC que el panel) carga la extensión en el
+  // invitado y no en la UI.
+  const added = await app.client.evaluate('window.terminusDesktop.addBrowserExtension()');
+  assert.equal(
+    added?.ok,
+    true,
+    `No se pudo dar de alta la extensión: ${JSON.stringify(added)}.`,
+  );
+  // La sesión del sitio ya existía: `loadExtension` aplica el content script en
+  // la próxima navegación, así que se recarga el fixture antes de mirar.
+  await reloadGuest(app.client);
+  const guestMarker = await app.client.evaluate(
+    guestExpression(`document.documentElement.getAttribute('${EXTENSION_MARKER}')`),
+  );
+  assert.equal(
+    guestMarker,
+    'loaded',
+    'La extensión MV3 no cargó su content script en la sesión del sitio.',
+  );
+  // La UI vive en defaultSession: una recarga fuerza cualquier content script
+  // cargado ahí a inyectarse, que es justo lo que el aislamiento debe impedir.
+  await app.client.send('Page.reload', { ignoreCache: false });
+  await waitForExpression(
+    app.client,
+    "Boolean(document.querySelector('header'))",
+    (value) => value === true,
+    'la cabecera de la app tras recargar',
+    30000,
+  );
+  await sleep(1200);
+  const appMarker = await app.client.evaluate(
+    `document.documentElement.getAttribute('${EXTENSION_MARKER}')`,
+  );
+  assert.equal(
+    appMarker,
+    null,
+    'La extensión se inyectó en la UI de Terminus (session.defaultSession).',
+  );
+  pass(
+    'la extensión MV3 carga en el invitado y la UI de Terminus no recibe su content script.',
+  );
   assert.equal(stepsRun, TOTAL_STEPS, 'pasos ejecutados: ' + stepsRun + '/' + TOTAL_STEPS);
 }
 
@@ -504,12 +575,13 @@ try {
   console.log(LOG + ' STEPS: ' + stepsRun + '/' + TOTAL_STEPS);
   await app?.cleanup();
   fixture?.server?.close();
-  if (profileDir) {
+  for (const dir of [profileDir, extensionDir]) {
+    if (!dir) continue;
     try {
-      fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     } catch (error) {
       console.warn(
-        `No se pudo borrar el perfil ${profileDir}: ${
+        `No se pudo borrar ${dir}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

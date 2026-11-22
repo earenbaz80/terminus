@@ -1768,6 +1768,10 @@ function registerWindowIpc() {
   ipcMain.handle('terminus:extensions:add', async (event) => {
     const win = windowForEvent(event);
     if (!win) return { ok: false, error: 'unauthorized' };
+    // Gancho del E2E: el diálogo nativo no se puede pulsar por CDP. La ruta
+    // entra por el mismo `addBrowserExtension` que el panel.
+    const preset = process.env.TERMINUS_E2E_EXTENSION_DIR;
+    if (preset) return addBrowserExtension(preset);
     const spanish = String(app.getLocale?.() || 'en').toLowerCase().startsWith('es');
     const picked = await dialog.showOpenDialog(win, {
       title: spanish ? 'Cargar extensión de navegador' : 'Load browser extension',

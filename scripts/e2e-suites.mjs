@@ -57,7 +57,7 @@ export const E2E_SUITES = [
     script: 'test:e2e:installed:browser',
     log: 'e2e-installed-browser.log',
     locale: '',
-    steps: 5,
+    steps: 6,
   },
   // No usa el instalador: el build de `release/win-unpacked` y el árbol de trabajo.
   {
